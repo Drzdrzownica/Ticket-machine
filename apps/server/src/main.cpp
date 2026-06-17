@@ -363,7 +363,7 @@ int main(int argc, char* argv[]){
         }
     });
     if(!server.listen(QHostAddress::LocalHost,12345)){
-        qFatal("Failed to start the server");
+        qFatal("Failed to start the server: %s", qPrintable(server.errorString()));
     }
     return app.exec();
 }
