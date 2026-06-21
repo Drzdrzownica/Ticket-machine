@@ -7,113 +7,110 @@
 #include <QtEndian>
 
 
-//avoid using types ending with "RESERVED". They are meant to be used as a temporary placeholder for emergency hotfixes.
-enum class MessageType:quint16{
+enum class ServerMessageType:quint16{
     //non-critical errors: 0x0000<=val<0x1000 
-    ERROR_RESERVED=0x0000, 
+    ERROR_BEGIN_RESERVED=0x0000, 
     ERR_Empty_command,
     ERR_Unknown_Command,
     ERR_Version_not_validated,
     ERR_Not_enough_bits,
-    ERR_Not_a_CLIENT_REQUEST_type,
     ERR_No_checkout_in_progress,
     ERR_Incorrect_argument_count,
     ERR_Checkout_with_no_arguments,
-    ERR_Parsing_error_Too_many_arguments,
-    ERR_Parsing_error_Unpacking_failed,
-    ERR_Ticket_name_is_an_empty_string,
+    ERR_Parsing_error,
+    ERR_Ticket_name_empty,
     ERR_Different_ticket_already_in_checkout,
-    ERR_Invalid_ticket_name_during_checkout,
+    ERR_Invalid_ticket_name,
     ERR_No_tickets_in_stock_during_checkout,
     ERR_Empty_string_argument,
     ERR_Disallowed_name_try_again,
-    ERR_Attempted_purchase_item_not_in_checkout,
+    ERR_Item_not_in_checkout,
     ERR_Wrong_item_in_checkout,
-    ERR_Ticket_no_longer_valid_Reservation_removed,
-    ERROR_END,
+    ERR_Ticket_no_longer_valid, //automatically removes reservation
+    ERROR_END_RESERVED,
 
     //critical server errors : 0x1000<=val<0x2000
-    CRIT_SERVER_ERR_RESERVED=0x1000,
+    CRIT_SERVER_ERR_BEGIN_RESERVED=0x1000,
     CRIT_SERVER_ERR_Ticket_list_empty,
-    CRIT_SERVER_ERR_ticket_list_overflow,
+    CRIT_SERVER_ERR_Ticket_list_overflow,
     CRIT_SERVER_ERR_No_valid_tickets_found,
-    CRIT_SERVER_ERR_END,
+    CRIT_SERVER_ERR_END_RESERVED,
 
     //critical client errors - disconnect socket : 0x2000<=val<0x3000
-    CRIT_CLIENT_ERR_RESERVED=0x2000,
+    CRIT_CLIENT_ERR_BEGIN_RESERVED=0x2000,
     CRIT_CLIENT_ERR_Invalid_ticket_in_reservation,
     CRIT_CLIENT_ERR_Version_invalidated,
-    CRIT_CLIENT_ERR_Client_server_version_mismatch,
+    CRIT_CLIENT_ERR_Version_mismatch,
     CRIT_CLIENT_ERR_Exceeded_maximum_request_length,
     CRIT_CLIENT_ERR_Request_buffer_overflow,
-    CRIT_CLIENT_ERR_END,
+    CRIT_CLIENT_ERR_END_RESERVED,
 
     //client warnings : 0x3000<=val<0x4000
-    CLIENT_WARNING_RESERVED=0x3000,
+    CLIENT_WARNING_BEGIN_RESERVED=0x3000,
     CLIENT_WARNING_Ticket_already_in_checkout,
     CLIENT_WARNING_Version_already_validated,
-    CLIENT_WARNING_END,
+    CLIENT_WARNING_END_RESERVED,
 
-    //client requests : 0x4000<=val<0x5000
-    CLIENT_REQUEST_RESERVED=0x4000,
-    CLIENT_REQUEST_VERSION_VALIDATION,
-    CLIENT_REQUEST_GET_TICKET_LIST,
-    CLIENT_REQUEST_START_CHECKOUT,
-    CLIENT_REQUEST_BUY,
-    CLIENT_REQUEST_CANCEL_CHECKOUT,
-    CLIENT_REQUEST_END,
-
-    //request succeeded responses : 0x5000<=val<0x6000
-    OK_RESERVED=0x5000,
+    //request succeeded responses : 0x4000<=val<0x5000
+    OK_BEGIN_RESERVED=0x4000,
     OK_CANCEL_CHECKOUT_checkout_empty,
     OK_CANCEL_CHECKOUT_checkout_cancelled,
     OK_GET_TICKET_LIST,
     OK_START_CHECKOUT,
     OK_BUY,
     OK_VERSION_VALIDATION,
-    OK_END
+    OK_END_RESERVED
 };
 
+static_assert((quint16)ServerMessageType::ERROR_END_RESERVED<0x1000);
+static_assert((quint16)ServerMessageType::CRIT_SERVER_ERR_END_RESERVED<0x2000);
+static_assert((quint16)ServerMessageType::CRIT_CLIENT_ERR_END_RESERVED<0x3000);
+static_assert((quint16)ServerMessageType::CLIENT_WARNING_END_RESERVED<0x4000);
+static_assert((quint16)ServerMessageType::OK_END_RESERVED<0x5000);
 
-static_assert((quint16)MessageType::ERROR_END<0x1000);
-static_assert((quint16)MessageType::CRIT_SERVER_ERR_END<0x2000);
-static_assert((quint16)MessageType::CRIT_CLIENT_ERR_END<0x3000);
-static_assert((quint16)MessageType::CLIENT_WARNING_END<0x4000);
-static_assert((quint16)MessageType::CLIENT_REQUEST_END<0x5000);
-static_assert((quint16)MessageType::OK_END<0x6000);
+
+enum class ClientMessageType:quint16{
+    //client requests : 0x0000<=val<0x1000, it doesn't matter currently, because there is only one category
+    REQUEST_BEGIN_RESERVED=0x0000,
+    REQUEST_VERSION_VALIDATION,
+    REQUEST_GET_TICKET_LIST,
+    REQUEST_START_CHECKOUT,
+    REQUEST_BUY,
+    REQUEST_CANCEL_CHECKOUT,
+    REQUEST_END_RESERVED,
+};
+static_assert((quint16)ClientMessageType::REQUEST_END_RESERVED<0x1000);
 
 constexpr quint16 CATEGORY_MASK = 0xF000;
-enum class MessageCategory : quint16 {
+enum class ServerMessageCategory : quint16 {
     Error         = 0x0000,
     ServerCrit    = 0x1000,
     ClientCrit    = 0x2000,
     ClientWarning = 0x3000,
-    ClientRequest = 0x4000,
-    Ok            = 0x5000
+    Ok            = 0x4000
 };
 
 
-bool isMessageTypeError(MessageType type){
-    return (static_cast<quint16>(type) & CATEGORY_MASK) == static_cast<quint16>(MessageCategory::Error);
+constexpr bool serverMessageCheckCategory(ServerMessageType type,ServerMessageCategory category)noexcept{
+    return (static_cast<quint16>(type) & CATEGORY_MASK) == static_cast<quint16>(category);
 }
-bool isMessageTypeCritClientError(MessageType type){
-    return (static_cast<quint16>(type) & CATEGORY_MASK) == static_cast<quint16>(MessageCategory::ClientCrit);
-}
-bool isMessageTypeCritServerError(MessageType type){
-    return (static_cast<quint16>(type) & CATEGORY_MASK) == static_cast<quint16>(MessageCategory::ServerCrit);
-}
-bool isMessageTypeClientWarning(MessageType type){
-    return (static_cast<quint16>(type) & CATEGORY_MASK) == static_cast<quint16>(MessageCategory::ClientWarning);
-}
-bool isMessageTypeClientRequest(MessageType type){
-    return (static_cast<quint16>(type) & CATEGORY_MASK) == static_cast<quint16>(MessageCategory::ClientRequest);
-}
-struct Message{
-    MessageType type;
+struct ServerMessage{
+    ServerMessageType type;
     QByteArray message="";//optional
 };
-
+struct ClientMessage{
+    ClientMessageType type;
+    QByteArray message="";//optional
+};
 namespace parsing{
+    ClientMessage unpackClientMessage(const QByteArray& data){
+        if(data.size()<2)throw std::invalid_argument("Not_enough_bytes");
+        return{
+            static_cast<ClientMessageType>(parsing::unpack16BitNumber(data)),
+            data.mid(2)
+        };
+    }
+
     QByteArray pack8BitPrefixedByteArray(const QByteArray& array){
         QByteArray result;
         if(array.size()>255)throw std::invalid_argument("array_too_long");
@@ -142,11 +139,13 @@ namespace parsing{
     }
 
     quint16 unpack16BitNumber(const QByteArray& array,quint32 index=0){
-        if(index+2>array.size())throw std::out_of_range("Not_enough_bits_left");
+        quint32 size=static_cast<quint32>(array.size());
+        if(index>size || index+2>size)throw std::out_of_range("Not_enough_bits_left");
         return qFromBigEndian<quint16>(reinterpret_cast<const uchar*>(array.constData()+index));
     }
     quint32 unpack32BitNumber(const QByteArray& array,quint32 index=0){
-        if(index+4>array.size())throw std::out_of_range("Not_enough_bits_left");
+        quint32 size=static_cast<quint32>(array.size());
+        if(index>size || index+4>size)throw std::out_of_range("Not_enough_bits_left");
         return qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(array.constData()+index));
     }
 }
@@ -160,8 +159,8 @@ class TicketStore{
         Ticket(quint32 cost,quint32 amount):cost(cost),availableAmount(amount){};
         Ticket()=default;
     };
-    std::map<QByteArray,Ticket> tickets;
-    std::map<ClientSession*,QByteArray> inCheckout;
+    std::unordered_map<QByteArray,Ticket> tickets;
+    std::unordered_map<ClientSession*,QByteArray> inCheckout;
 public:
     TicketStore(){
         //pull tickets from database
@@ -175,14 +174,14 @@ public:
         if(tickets.empty())qFatal("Failed to start the server: Failed to load tickets from the dataBase");
     }
 
-    Message getTicketList(){
-        if(tickets.empty())return{MessageType::CRIT_SERVER_ERR_Ticket_list_empty};
+    ServerMessage getTicketList(){
+        if(tickets.empty())return{ServerMessageType::CRIT_SERVER_ERR_Ticket_list_empty};
         
         //todo: Subscribe socket to ticket availability updates.
 
         QByteArray answer;
         
-        if(tickets.size()>255)return {MessageType::CRIT_SERVER_ERR_ticket_list_overflow};
+        if(tickets.size()>255)return {ServerMessageType::CRIT_SERVER_ERR_Ticket_list_overflow};
         quint8 validTickets=0;
         //reserve space for validTickets;
         answer.append('\0');
@@ -201,59 +200,59 @@ public:
             validTickets++;
             answer.append(ticketPacketData);
         }
-        if(validTickets==0)return {MessageType::CRIT_SERVER_ERR_No_valid_tickets_found};
+        if(validTickets==0)return {ServerMessageType::CRIT_SERVER_ERR_No_valid_tickets_found};
         answer.data()[0]=validTickets;
-        return {MessageType::OK_GET_TICKET_LIST,answer};
+        return {ServerMessageType::OK_GET_TICKET_LIST,answer};
     }
 
-    Message tryCancelCheckout(ClientSession* socket,bool disconnectCleanup=false){
+    ServerMessage tryCancelCheckout(ClientSession* socket,bool disconnectCleanup=false){
         //todo: connect so it runs 5 minutes after successful tryCheckout and sends such information through the socket, unless called or canceled by buy.
 
         auto currentCheckout=inCheckout.find(socket);
         if(currentCheckout==inCheckout.end()){
-            if(disconnectCleanup)return {MessageType::OK_CANCEL_CHECKOUT_checkout_empty};
-            else return {MessageType::ERR_No_checkout_in_progress};
+            if(disconnectCleanup)return {ServerMessageType::OK_CANCEL_CHECKOUT_checkout_empty};
+            else return {ServerMessageType::ERR_No_checkout_in_progress};
         }
         auto currentTicket = tickets.find(currentCheckout->second);
         if(currentTicket==tickets.end()){
             inCheckout.erase(socket);
-            return {MessageType::CRIT_CLIENT_ERR_Invalid_ticket_in_reservation};
+            return {ServerMessageType::CRIT_CLIENT_ERR_Invalid_ticket_in_reservation};
         }
 
         currentTicket->second.availableAmount++;
         inCheckout.erase(socket);
-        return {MessageType::OK_CANCEL_CHECKOUT_checkout_cancelled};
+        return {ServerMessageType::OK_CANCEL_CHECKOUT_checkout_cancelled};
     }
 
-    Message tryCheckout(ClientSession* socket,const QByteArray& arguments){
+    ServerMessage tryCheckout(ClientSession* socket,const ClientMessage& request){
 
-        if(arguments.isEmpty())return {MessageType::ERR_Checkout_with_no_arguments};
+        if(request.message.isEmpty())return {ServerMessageType::ERR_Checkout_with_no_arguments};
         
         QByteArray ticketName;
         try{
             quint32 offset=0;
-            ticketName=parsing::unpack8BitPrefixedByteArray(arguments,offset);
-            if(offset!=arguments.size())return {MessageType::ERR_Parsing_error_Too_many_arguments};
+            ticketName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
+            if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
         }catch(std::exception& e){
-            return {MessageType::ERR_Parsing_error_Unpacking_failed};
+            return {ServerMessageType::ERR_Parsing_error};
         }
-        if(ticketName.isEmpty())return {MessageType::ERR_Ticket_name_is_an_empty_string};
+        if(ticketName.isEmpty())return {ServerMessageType::ERR_Ticket_name_empty};
 
 
         auto checkout = inCheckout.find(socket);
         if(checkout!=inCheckout.end()){
-            if(checkout->second==ticketName)return {MessageType::CLIENT_WARNING_Ticket_already_in_checkout};
-            else return {MessageType::ERR_Different_ticket_already_in_checkout};
+            if(checkout->second==ticketName)return {ServerMessageType::CLIENT_WARNING_Ticket_already_in_checkout};
+            else return {ServerMessageType::ERR_Different_ticket_already_in_checkout};
         }
         auto ticket = tickets.find(ticketName);
-        if(ticket==tickets.end())return {MessageType::ERR_Invalid_ticket_name_during_checkout};
+        if(ticket==tickets.end())return {ServerMessageType::ERR_Invalid_ticket_name};
         
         if(ticket->second.availableAmount>0){
             inCheckout.emplace(socket,ticketName);
             ticket->second.availableAmount--;
-            return {MessageType::OK_START_CHECKOUT,ticketName};
+            return {ServerMessageType::OK_START_CHECKOUT,ticketName};
         }else{
-            return {MessageType::ERR_No_tickets_in_stock_during_checkout};
+            return {ServerMessageType::ERR_No_tickets_in_stock_during_checkout};
         }
     }
 
@@ -268,35 +267,35 @@ public:
         return true;
     }
 
-    Message confirmPurchase(ClientSession* socket,const QByteArray& parameters){
+    ServerMessage confirmPurchase(ClientSession* socket,const ClientMessage& request){
 
         QByteArray buyerName;
         QByteArray ticketName;
         try{
             quint32 offset=0;
-            buyerName=parsing::unpack8BitPrefixedByteArray(parameters,offset);
-            ticketName=parsing::unpack8BitPrefixedByteArray(parameters,offset);
-            if(offset!=parameters.size())return {MessageType::ERR_Parsing_error_Too_many_arguments};
+            buyerName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
+            ticketName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
+            if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
         }catch(std::exception& e){
-            return {MessageType::ERR_Parsing_error_Unpacking_failed};
+            return {ServerMessageType::ERR_Parsing_error};
         }
-        if(buyerName.isEmpty() || ticketName.isEmpty())return {MessageType::ERR_Empty_string_argument};
+        if(buyerName.isEmpty() || ticketName.isEmpty())return {ServerMessageType::ERR_Empty_string_argument};
 
         auto reservation = inCheckout.find(socket);
         //keep item in checkout unless error specifies otherwise
-        if(validateName(buyerName)==false)return {MessageType::ERR_Disallowed_name_try_again};
-        if(reservation==inCheckout.end())return {MessageType::ERR_Attempted_purchase_item_not_in_checkout};
-        if(reservation->second!=ticketName)return {MessageType::ERR_Wrong_item_in_checkout};
+        if(validateName(buyerName)==false)return {ServerMessageType::ERR_Disallowed_name_try_again};
+        if(reservation==inCheckout.end())return {ServerMessageType::ERR_Item_not_in_checkout};
+        if(reservation->second!=ticketName)return {ServerMessageType::ERR_Wrong_item_in_checkout};
         if(tickets.find(ticketName)==tickets.end()){
             inCheckout.erase(socket);
-            return {MessageType::ERR_Ticket_no_longer_valid_Reservation_removed};
+            return {ServerMessageType::ERR_Ticket_no_longer_valid};
         }
         //todo: stop the 5 minutes cancel-checkout clock
         //todo: Push [name][ticket_name] into the database. On fail return error. For now as a placeholder:
         qInfo()<<buyerName+" purchased ticket for "+ticketName;
         inCheckout.erase(socket);
         
-        return {MessageType::OK_BUY,ticketName};
+        return {ServerMessageType::OK_BUY,ticketName};
     }
 };
 
@@ -325,60 +324,59 @@ private:
     QByteArray buffer;
     TicketStore* store; //non-owning
 
-    Message validateClientVersion(const QByteArray& request){
+    ServerMessage validateClientVersion(const ClientMessage& request){
         if(versionValidated){
-            if(request==version)return {MessageType::CLIENT_WARNING_Version_already_validated};
+            if(request.message==version)return {ServerMessageType::CLIENT_WARNING_Version_already_validated};
             else {
                 //just in case invalidate, but effectively redundant since crit_err will drop the connection
                 versionValidated=false;
-                return {MessageType::CRIT_CLIENT_ERR_Version_invalidated};
+                return {ServerMessageType::CRIT_CLIENT_ERR_Version_invalidated};
             }
         }else{
-            if(request==version){
+            if(request.message==version){
                 versionValidated=true;
-                return {MessageType::OK_VERSION_VALIDATION};
+                return {ServerMessageType::OK_VERSION_VALIDATION};
             }
             else{
-                return {MessageType::CRIT_CLIENT_ERR_Client_server_version_mismatch};
+                return {ServerMessageType::CRIT_CLIENT_ERR_Version_mismatch};
             }
         }
     }
 
-    Message craftResponse(const QByteArray& request){
-        if(request.isEmpty())return {MessageType::ERR_Empty_command};
-        if(request.size()<2)return {MessageType::ERR_Not_enough_bits};
+    ServerMessage craftResponse(const QByteArray& rawRequest){
+        if(rawRequest.isEmpty())return {ServerMessageType::ERR_Empty_command};
+        if(rawRequest.size()<2)return {ServerMessageType::ERR_Not_enough_bits};
 
-        MessageType opType = static_cast<MessageType>(parsing::unpack16BitNumber(request));
-        if(isMessageTypeClientRequest(opType)==false)return {MessageType::ERR_Not_a_CLIENT_REQUEST_type};
+        ClientMessage request=parsing::unpackClientMessage(rawRequest);
 
-        if(opType==MessageType::CLIENT_REQUEST_VERSION_VALIDATION){
-            return validateClientVersion(request.mid(2));
+        if(request.type==ClientMessageType::REQUEST_VERSION_VALIDATION){
+            return validateClientVersion(request);
         }
 
         if(versionValidated==false){
-            return {MessageType::ERR_Version_not_validated};
+            return {ServerMessageType::ERR_Version_not_validated};
         }
 
-        if(opType==MessageType::CLIENT_REQUEST_GET_TICKET_LIST){
-            if(request.size()!=2)return {MessageType::ERR_Incorrect_argument_count};
+        if(request.type==ClientMessageType::REQUEST_GET_TICKET_LIST){
+            if(request.message.isEmpty()==false)return {ServerMessageType::ERR_Incorrect_argument_count};
             else return store->getTicketList();
         }
         //Format: START_CHECKOUT <ticket_name>
-        if(opType==MessageType::CLIENT_REQUEST_START_CHECKOUT){
-            return store->tryCheckout(this,request.mid(2));
+        if(request.type==ClientMessageType::REQUEST_START_CHECKOUT){
+            return store->tryCheckout(this,request);
         }
         //format: BUY <customer_name> <ticket_name>
-        if(opType==MessageType::CLIENT_REQUEST_BUY){
-            return store->confirmPurchase(this,request.mid(2));
+        if(request.type==ClientMessageType::REQUEST_BUY){
+            return store->confirmPurchase(this,request);
         }
-        if(opType==MessageType::CLIENT_REQUEST_CANCEL_CHECKOUT){
-            if(request.size()!=2)return {MessageType::ERR_Incorrect_argument_count};
+        if(request.type==ClientMessageType::REQUEST_CANCEL_CHECKOUT){
+            if(request.message.isEmpty()==false)return {ServerMessageType::ERR_Incorrect_argument_count};
             else return store->tryCancelCheckout(this);
         }
-        return {MessageType::ERR_Unknown_Command};
+        return {ServerMessageType::ERR_Unknown_Command};
     }
 
-    QByteArray frameResponse(const Message& response){
+    QByteArray frameResponse(const ServerMessage& response){
 
         QByteArray answer;
         quint32 size=response.message.size()+sizeof(response.type);
@@ -390,19 +388,32 @@ private:
         return answer;
     }
 
-    void fail(Message message,const QByteArray& request=""){
+    [[noreturn]] void fatalShutDown(ServerMessage message,const QByteArray& request=""){
         QByteArray error;
-        if(isMessageTypeCritServerError(message.type)){
-            //todo: dump all possibly relevant information into a file
-            error="CRIT_SERVER_ERROR. ErrorCode:";
-            error+=QByteArray::number((quint16)message.type);
-            if(message.message.isEmpty()==false){
-                error+=" ErrorMessage:";
-                error+=message.message;
-            }
-            //todo: send general information about shutdown to all connected sockets(not server error),then try to shutdown gracefully. For now as a placeholder we do it the quick way:
-            qFatal("%s", error.constData());
+        //todo: dump all possibly relevant information into a file
+        error="CRIT_SERVER_ERROR. ErrorCode:";
+        error+=QByteArray::number((quint16)message.type);
+        if(message.message.isEmpty()==false){
+            error+=" ErrorMessage:";
+            error+=message.message;
         }
+        if(request.size()<2){
+            error+=" not enough bytes in the request";
+        }else if(request.isEmpty()==false){
+            error+=" OnRequestCode:";
+            error+=QByteArray::number(parsing::unpack16BitNumber(request));
+            if(request.size()>2){
+                error+=" RequestMessage:";
+                error+=request.mid(2);
+            }
+        }
+        //todo: send general information about shutdown to all connected sockets,then try to shutdown gracefully. 
+        //placeholder:
+        qFatal("%s", error.constData());
+    }
+
+    void fail(ServerMessage message,const QByteArray& request=""){
+        QByteArray error;
 
         error="ERROR. ErrorCode:";
         error+=QByteArray::number((quint16)message.type);
@@ -411,8 +422,9 @@ private:
             error+=" ErrorMessage:";
             error+=message.message;
         }
-
-        if(request.isEmpty()==false){
+        if(request.size()<2){
+            error+=" not enough bytes in the request";
+        }else if(request.isEmpty()==false){
             error+=" OnRequestCode:";
             error+=QByteArray::number(parsing::unpack16BitNumber(request));
             if(request.size()>2){
@@ -422,15 +434,14 @@ private:
         }
         qWarning()<<error;
         socket->write(frameResponse(message));
-        socket->flush();
-        socket->disconnectFromHost();
+        connect(socket,&QTcpSocket::bytesWritten,socket,&QTcpSocket::disconnectFromHost,Qt::SingleShotConnection);
     }
 
     void onReadyRead() {
         buffer+=socket->readAll();
 
         if(buffer.size()>MAX_BUFFER_SIZE){
-            fail({MessageType::CRIT_CLIENT_ERR_Request_buffer_overflow});
+            fail({ServerMessageType::CRIT_CLIENT_ERR_Request_buffer_overflow});
             return;
         }
         while(true){
@@ -439,26 +450,26 @@ private:
             quint32 len=parsing::unpack32BitNumber(buffer);
             quint32 totalLen=len+4;
             if(len>MAX_REQUEST_SIZE){
-                fail({MessageType::CRIT_CLIENT_ERR_Exceeded_maximum_request_length},buffer);
+                fail({ServerMessageType::CRIT_CLIENT_ERR_Exceeded_maximum_request_length},buffer);
                 return;
             }
             if(buffer.size()<totalLen)break;
-            QByteArray request = buffer.mid(4,len);
+            QByteArray rawRequest = buffer.mid(4,len);
             buffer.remove(0,totalLen);
 
-            Message response = craftResponse(request);
-            if(isMessageTypeCritClientError(response.type)){
-                fail(response,request);
+            ServerMessage response = craftResponse(rawRequest);
+            if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientCrit)){
+                fail(response,rawRequest);
                 return;
             }
-            if(isMessageTypeCritServerError(response.type)){
-                fail(response,request);
+            if(serverMessageCheckCategory(response.type,ServerMessageCategory::ServerCrit)){
+                fatalShutDown(response,rawRequest);
                 return;
             }
-            if(isMessageTypeError(response.type)){
+            if(serverMessageCheckCategory(response.type,ServerMessageCategory::Error)){
                 qWarning()<<"CLIENT_ERROR code "<< (quint16)response.type <<response.message;
             }
-            if(isMessageTypeClientWarning(response.type)){
+            if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientWarning)){
                 qWarning()<<"CLIENT_WARNING:"<<response.message;
             }
             socket->write(frameResponse(response));
