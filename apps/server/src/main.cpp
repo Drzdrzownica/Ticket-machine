@@ -53,12 +53,8 @@ enum class ServerMessageType:quint16{
 
     //request succeeded responses : 0x4000<=val<0x5000
     OK_BEGIN_RESERVED=0x4000,
-    OK_CANCEL_CHECKOUT_checkout_empty,
-    OK_CANCEL_CHECKOUT_checkout_cancelled,
-    OK_GET_TICKET_LIST,
-    OK_START_CHECKOUT,
-    OK_BUY,
-    OK_VERSION_VALIDATION,
+    OK,
+    OK_No_change,
     OK_END_RESERVED
 };
 
@@ -110,24 +106,18 @@ constexpr bool serverMessageCheckCategory(ServerMessageType type,ServerMessageCa
     if(isServerMessageTypeReserved(type))return false;
     return (static_cast<quint16>(type) & CATEGORY_MASK) == static_cast<quint16>(category);
 }
+
 struct ServerMessage{
     ServerMessageType type;
     QByteArray message="";//optional
 };
+
 struct ClientMessage{
     ClientMessageType type;
     QByteArray message="";//optional
 };
-namespace parsing{
-    //Does not guarantee that unpacked message will be valid
-    ClientMessage unpackClientMessage(const QByteArray& data){
-        if(data.size()<2)throw std::invalid_argument("Not_enough_bytes");
-        return{
-            static_cast<ClientMessageType>(parsing::unpackNumber<quint16>(data)),
-            data.mid(2)
-        };
-    }
 
+namespace parsing{
     QByteArray pack8BitPrefixedByteArray(const QByteArray& array){
         QByteArray result;
         if(array.size()>255)throw std::invalid_argument("array_too_long");
@@ -141,9 +131,9 @@ namespace parsing{
         if(parameters.size()<=offset)throw std::out_of_range("Offset_larger_than_parameters_size");
         quint8 len=parameters[offset++];
         if(len>parameters.size()-offset)throw std::out_of_range("Prefix_larger_than_remaining_message");
-        quint32 oldOffset=offset;
+        QByteArray result = parameters.mid(offset,len);
         offset+=len;
-        return parameters.mid(oldOffset,len);
+        return result;
     }
 
     template<typename T>
@@ -161,6 +151,15 @@ namespace parsing{
         quint32 size=static_cast<quint32>(array.size());
         if(index>size || index+sizeof(T)>size)throw std::out_of_range("Not_enough_bits_left");
         return qFromBigEndian<T>(reinterpret_cast<const uchar*>(array.constData()+index));
+    }
+
+    //Does not guarantee that unpacked message will be valid
+    ClientMessage unpackClientMessage(const QByteArray& data){
+        if(data.size()<2)throw std::invalid_argument("Not_enough_bytes");
+        return{
+            static_cast<ClientMessageType>(parsing::unpackNumber<quint16>(data)),
+            data.mid(2)
+        };
     }
 }
 
@@ -219,7 +218,7 @@ public:
         }
         if(validTickets==0)return {ServerMessageType::CRIT_SERVER_ERR_No_valid_tickets_found};
         answer.data()[0]=validTickets;
-        return {ServerMessageType::OK_GET_TICKET_LIST,answer};
+        return {ServerMessageType::OK,answer};
     }
 
     ServerMessage tryCancelCheckout(ClientSession* socket,bool disconnectCleanup=false){
@@ -227,7 +226,7 @@ public:
 
         auto currentCheckout=inCheckout.find(socket);
         if(currentCheckout==inCheckout.end()){
-            if(disconnectCleanup)return {ServerMessageType::OK_CANCEL_CHECKOUT_checkout_empty};
+            if(disconnectCleanup)return {ServerMessageType::OK_No_change};
             else return {ServerMessageType::ERR_No_checkout_in_progress};
         }
         auto currentTicket = tickets.find(currentCheckout.value());
@@ -238,7 +237,7 @@ public:
 
         currentTicket.value().availableAmount++;
         inCheckout.erase(currentCheckout);
-        return {ServerMessageType::OK_CANCEL_CHECKOUT_checkout_cancelled};
+        return {ServerMessageType::OK};
     }
 
     ServerMessage tryCheckout(ClientSession* socket,const ClientMessage& request){
@@ -267,7 +266,7 @@ public:
         if(ticket.value().availableAmount>0){
             inCheckout.emplace(socket,ticketName);
             ticket.value().availableAmount--;
-            return {ServerMessageType::OK_START_CHECKOUT,ticketName};
+            return {ServerMessageType::OK,ticketName};
         }else{
             return {ServerMessageType::ERR_No_tickets_in_stock_during_checkout};
         }
@@ -312,7 +311,7 @@ public:
         qInfo()<<buyerName+" purchased ticket for "+ticketName;
         inCheckout.erase(reservation);
         
-        return {ServerMessageType::OK_BUY,ticketName};
+        return {ServerMessageType::OK,ticketName};
     }
 };
 
@@ -352,7 +351,7 @@ private:
         }else{
             if(request.message==version){
                 versionValidated=true;
-                return {ServerMessageType::OK_VERSION_VALIDATION};
+                return {ServerMessageType::OK};
             }
             else{
                 return {ServerMessageType::CRIT_CLIENT_ERR_Version_mismatch};
@@ -389,14 +388,15 @@ private:
         return {ServerMessageType::ERR_Unknown_Command};
     }
 
-    QByteArray frameResponse(const ServerMessage& response){
-
+    QByteArray frameResponse(const ServerMessage& response,const ClientMessage& request){
         QByteArray answer;
-        quint32 size=response.message.size()+sizeof(response.type);
-        answer.reserve(response.message.size()+sizeof(response.type)+sizeof(size));
+        quint32 size=response.message.size()+sizeof(response.type)+sizeof(request.type);
+
+        answer.reserve(size+sizeof(size));
         
         answer.append(parsing::packNumber(size));
         answer.append(parsing::packNumber((quint16)response.type));
+        answer.append(parsing::packNumber((quint16)request.type));
         answer.append(response.message);
         return answer;
     }
@@ -430,7 +430,7 @@ private:
     void fail(const ServerMessage& error,const ClientMessage& request){
         QByteArray errorString=buildDiagnostic("ERROR",error,request);
         qWarning()<<errorString;
-        socket->write(frameResponse(error));
+        socket->write(frameResponse(error,request));
         socket->disconnectFromHost();
     }
 
@@ -486,7 +486,7 @@ private:
             if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientWarning)){
                 qWarning()<<"CLIENT_WARNING:"<<response.message;
             }
-            socket->write(frameResponse(response));
+            socket->write(frameResponse(response,request));
         }
     }
 };
