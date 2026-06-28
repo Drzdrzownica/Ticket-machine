@@ -1,7 +1,7 @@
 #ifndef TICKET_STORE_H
 #define TICKET_STORE_H
 #pragma once
-#include "protocol_serialization.h"
+#include "protocol/serialization.h"
 
 class TicketStore{
     struct Ticket{

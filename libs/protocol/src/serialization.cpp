@@ -1,4 +1,4 @@
-#include "protocol_serialization.h"
+#include "protocol/serialization.h"
 
 QByteArray parsing::pack8BitPrefixedByteArray(const QByteArray& array){
     QByteArray result;

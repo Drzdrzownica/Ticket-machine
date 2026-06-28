@@ -1,6 +1,6 @@
 #ifndef SERIALIZATION_H
 #define SERIALIZATION_H
-#include "protocol_messages.h"
+#include "protocol/messages.h"
 #include <QtEndian>
 
 namespace parsing{
