@@ -16,13 +16,13 @@ add_executable(serverProgram
     ./libs/server/src/ClientSession.cpp
     ./apps/server/src/main.cpp
 )
+add_executable(myprogram ./apps/client/src/main.cpp)
 
 target_include_directories(serverProgram PRIVATE ${CMAKE_SOURCE_DIR}/libs/server/include)
 target_include_directories(serverProgram PRIVATE ${CMAKE_SOURCE_DIR}/libs/protocol/include)
 
+target_link_libraries(myprogram Qt6::Network Qt6::Widgets)
 target_link_libraries(serverProgram Qt6::Network)
 
-#for now this main.cpp is empty:
-#add_executable(myprogram ./apps/client/src/main.cpp)
 
 
