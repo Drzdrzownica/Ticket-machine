@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Network Widgets)
 
+qt_standard_project_setup()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable(serverProgram 

@@ -9,382 +9,385 @@
 #include <QLineEdit>
 #include <iostream>
 #include <QTimer>
-using namespace std;
-class LoginPage;
-class MainPage;
-class LanguagesPage;
-class ChooseTicketPage;
+#include <QObject>
 
-class InputPersonalDataPage;
 
-class PaymentPage;
-class PriningTicketPage;
+//this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
 
 //just to look pretty, I won't bother implementing languages, at least I don't think I will.
-enum class languages:int{
-    english=0
+enum class Language{
+    English=0
 };
 
-struct ticketData{
+//stuff like, what coins the machine contains (if it can output exact change), etc. This and all other structs below are essentially placeholders for now.
+struct PlaceholderForLocalData{
+    int dummyVal=0;
+};
+
+struct TicketData{
+    using Cents = quint32;
     QString name;
-    quint32 priceCents;
+    Cents price;
+};
+
+struct FullPurchaseData{
+    TicketData ticketData;
+    QString buyerName;
 };
 
 
 
-//eventually from server, but as it's a prototype...
-std::vector<ticketData> createTicketsList(){
+class MainPage:public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
 
-    std::vector<ticketData> ans;
-    ans.push_back({"lorem",1});
-    ans.push_back({"ipsum",2});
-    return ans;
-}
+    //languages are a non-functional placeholde (since a page with a single option seems redundant,and I still want to have a main page)
+    QPushButton languagesBtn{"Languages"};
+    QPushButton purchaseBtn{"Buy ticket"};
+    QPushButton exitBtn{"EXIT"};
 
-class MainWindow : public QWidget
-{
-    std::vector<ticketData> ticketsList;
-    LoginPage* loginPage;
-    LanguagesPage* languagesPage;
-    MainPage* mainPage;
-
-    //the ticket list is from the server and it can change so the page has to be created dynamically
-    ChooseTicketPage* chooseTicketPage=nullptr;
-    
-    
-    QVBoxLayout *layout;
-    
-    languages language=languages::english;
-    
-    public:
-    QStackedWidget *stack;
-    
-    std::vector<PaymentPage*> paymentPages;
-    std::vector<InputPersonalDataPage*> inputPersonalDataPages;
-    std::vector<PriningTicketPage*> priningTicketPages;
-
-    MainWindow();
-    std::vector<ticketData> getTicketsList() const{
-        return ticketsList;
-    }
-    void loginToDB(const QString& dbID);
-    void setLanguage(const languages& lang){
-        language=lang;
-    };
-    void cleanDynamicPages();
-    void goToMainPage();
-    void goToLangPage();
-    void goToChooseTicket();
-};
-
-class PaymentPage:public QWidget{
-    QVBoxLayout *layout;
-    MainWindow* window;
 public:
-    PaymentPage(MainWindow* Window,ticketData data,QString userName);
+    MainPage():layout(this){
+        layout.addWidget(&languagesBtn);
+        layout.addWidget(&purchaseBtn);
+        layout.addWidget(&exitBtn);
+        connect(&languagesBtn,&QPushButton::clicked,this,&MainPage::languagesOption);
+        connect(&purchaseBtn,&QPushButton::clicked,this,&MainPage::purchaseOption);
+        connect(&exitBtn,&QPushButton::clicked,&QApplication::quit);
+    }
+signals:
+    void languagesOption();
+    void purchaseOption();
+};
+
+
+class LanguagesPage:public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+
+    QPushButton englishBtn{"English "+QString::fromUcs4(U"\U0001F1FA\U0001F1F8")};
+
+public:
+    LanguagesPage():layout(this){
+        layout.addWidget(&englishBtn);
+        connect(&englishBtn,&QPushButton::clicked,this,[this](){emit languagePicked(Language::English);});
+    }
+signals:
+    void languagePicked(Language);
+};
+
+class ChooseTicketPage: public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+    QVBoxLayout buttonsLayout;
+    
+    QLabel errorMessage{"Sorry, no tickets available"};
+    QPushButton backButton{"Back"};
+
+    std::vector<QPushButton*> ticketButtons;
+
+    void clearTicketButtons(){
+        for(auto* btn:ticketButtons){
+            buttonsLayout.removeWidget(btn);
+            btn->deleteLater();
+        }
+        ticketButtons.clear();
+    }
+
+public:
+    ChooseTicketPage():layout(this){
+        layout.addLayout(&buttonsLayout);
+        layout.addWidget(&errorMessage);
+        layout.addWidget(&backButton);
+        connect(&backButton,&QPushButton::clicked,this,&ChooseTicketPage::backPressed);
+    }
+    void reinitialize(const std::vector<TicketData>& data){
+        clearTicketButtons();
+        if(data.empty()){
+            errorMessage.setVisible(true);
+        }else{
+            errorMessage.setVisible(false);
+            for(auto& ticket:data){
+                QPushButton* btn=new QPushButton(ticket.name,this);
+                ticketButtons.push_back(btn);
+                buttonsLayout.addWidget(btn);
+                connect(btn,&QPushButton::clicked,this,[this,ticket](){
+                    emit this->ticketPicked(ticket);
+                });
+            }
+        }
+    }
+signals:
+    void backPressed();
+    void ticketPicked(TicketData);
 };
 
 class InputPersonalDataPage:public QWidget{
-    MainWindow* window;
-    ticketData data;
-    QVBoxLayout *layout;
+    Q_OBJECT
+    QVBoxLayout layout;
 
-public:
-    InputPersonalDataPage(MainWindow* Window,ticketData Data);
-};
+    TicketData ticketData;
 
-
-
-class ChooseTicketPage:public QWidget{
-
-    QVBoxLayout *layout;
-    MainWindow* window;
-
-    QPushButton* returnToMainPageBtn;
-
-    QLabel* temp;
-
-public:
-    ChooseTicketPage(MainWindow* Window):window(Window){
-
-        layout=new QVBoxLayout(this);
+    QLabel title;
+    QLineEdit inputField;
+    QPushButton confirmButton{"confirm"};
+    QPushButton cancelButton{"Cancel"};
 
 
-        for(const auto& item:window->getTicketsList()){
-            QPushButton* btn = new QPushButton(item.name);
-            layout->addWidget(btn);
-            InputPersonalDataPage* nextPage = new InputPersonalDataPage(window,item);
-            window->inputPersonalDataPages.push_back(nextPage);
-            window->stack->addWidget(nextPage);
-            connect(btn,&QPushButton::pressed,window,[Window,nextPage](){
-                Window->stack->setCurrentWidget(nextPage);
-            });
+    //placeholder fruction. Will update later
+    bool verifyName(){
+        if(inputField.text().isEmpty())return false;
+        for(auto c:inputField.text()){
+            if(c>='a' and c<='z')continue;
+            if(c>='A' and c<='Z')continue;
+            return false;
         }
-
-        returnToMainPageBtn=new QPushButton("Back");
-        layout->addWidget(returnToMainPageBtn);
-        connect(returnToMainPageBtn,&QPushButton::pressed,window,&MainWindow::goToMainPage);
+        return true;
     }
 
-};
-
-class LanguagesPage:public QWidget{
-    QVBoxLayout *layout;
-    QPushButton* englishBtn;
-
-    MainWindow* window;
+    void processSubmission(){
+        if(verifyName()==false){
+            inputField.clear();
+        }else{
+            FullPurchaseData data{ticketData,inputField.text()};
+            emit validPersonalDataSubmitted(data);
+        }
+    }
 public:
-    LanguagesPage(MainWindow* Window):window(Window){
-        layout=new QVBoxLayout(this);
-
-        englishBtn= new QPushButton("English "+QString::fromUcs4(U"\U0001F1FA\U0001F1F8"));
-
-        layout->addWidget(englishBtn);
-
-        connect(englishBtn,&QPushButton::pressed,[this](){
-                window->setLanguage(languages::english);
-                window->goToMainPage();
-            }
+    InputPersonalDataPage():layout(this){
+        layout.addWidget(&title);
+        layout.addWidget(&inputField);
+        layout.addWidget(&confirmButton);
+        layout.addWidget(&cancelButton);
+        connect(&cancelButton,&QPushButton::clicked,this,[this](){
+            inputField.setText("");
+            emit cancelPressed();
+        }
         );
-
+        connect(&confirmButton,&QPushButton::clicked,this,[this](){
+            processSubmission();
+            inputField.setText("");
+        }
+        );
     }
+    void reinitialize(const TicketData& data){
+        ticketData=data;
+        title.setText(data.name);
+    }
+signals:
+    void cancelPressed();
+    void validPersonalDataSubmitted(FullPurchaseData);
 };
 
+class LoginPage: public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+    QLabel instruction{"Enter The DB id"};
+    QLineEdit inputBox;
+    QLabel tryAgainMessage{"No DB with given ID. Try again"};
+    QPushButton loginButton{"login"};
 
-class LoginPage : public QWidget
-{
-    QVBoxLayout *layout;
+    void loginClicked(){
+        //for now placeholder, later try to log into the local db and retrieve real data. /
+        //The DB is just local storage, but since this is just a simulation of a real machine, /
+        //there can be multiple machines with multiple DBs simulated on a single PC so we have to diferentiate them
+        if(inputBox.text()=="temp"){
+            PlaceholderForLocalData temp=PlaceholderForLocalData{};
+            tryAgainMessage.setVisible(false);
+            emit loggedIntoDatabase(temp);
+        }else{
+            tryAgainMessage.setVisible(true);
+        }
+    }
 
-    QLabel *text;
-    QPushButton* button;
-    QLabel *badLoginText;
-    QLineEdit* box;
-
-    MainWindow* window;
-    
 public:
-    LoginPage(MainWindow* Window):window(Window){
-        layout=new QVBoxLayout(this);
+    LoginPage():layout(this){
+        layout.addWidget(&instruction);
+        layout.addWidget(&inputBox);
+        layout.addWidget(&tryAgainMessage);
+        layout.addWidget(&loginButton);
+        tryAgainMessage.setVisible(false);
+        connect(&loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
+    }
+signals:
+    void loggedIntoDatabase(PlaceholderForLocalData);
+};
 
-        text   = new QLabel("Please input the database ID");
-        button = new QPushButton("Login");
-        badLoginText=new QLabel("ID not found. Try again.");
-        box = new QLineEdit;
+class PaymentPage: public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+    
+    FullPurchaseData data;
 
-        badLoginText->setStyleSheet("color:red;");
-        badLoginText->setVisible(false);
+    QLabel info{"You are not supposed to see this message"};
+    QPushButton confirmButton{"confirm"};
+    QPushButton cancelButton{"Cancel"};
+    
+    //placeholder. For now accept blindly
+    void tryAcceptPurchase(){
+        if(true){
+            emit coinsAccepted(data);
+        }
+    }
 
-        layout->addWidget(text,0,Qt::AlignCenter);
-        layout->addWidget(box);
-        layout->addWidget(badLoginText,0,Qt::AlignCenter);
-        layout->addWidget(button);
-        
-        connect(box,&QLineEdit::returnPressed,button,&QPushButton::click);
-        connect(button,&QPushButton::clicked,[this](){
-            window->loginToDB(box->text());
-            //std::cout<<box->text().toStdString()<<"\n"<<std::flush;
+public:
+    PaymentPage():layout(this){
+        layout.addWidget(&info);
+        layout.addWidget(&confirmButton);
+        layout.addWidget(&cancelButton);
+        connect(&cancelButton,&QPushButton::clicked,this,&PaymentPage::cancelPressed);
+        connect(&confirmButton,&QPushButton::clicked,this,&PaymentPage::tryAcceptPurchase);
+    }
+    void reinitialize(const FullPurchaseData& data){
+        this->data=data;
+        //for now coins because I don't want to bother with currency yet
+        info.setText("insert "+QString::number(data.ticketData.price)+" coins");
+
+    }
+signals:
+    void cancelPressed();
+    void coinsAccepted(FullPurchaseData);
+};
+
+class PrintingPage:public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+    QLabel message{"You are not supposed to see this message"};
+
+public:
+    PrintingPage():layout(this){
+        layout.addWidget(&message);
+    }
+
+    //This is obviously an abstarction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing.
+    void startPrinting(const FullPurchaseData& data){
+        message.setText("Printing in progress...");
+        QTimer::singleShot(3000, this, [this] {
+            message.setText("Printing Done");
+            QTimer::singleShot(2000, this, [this] {
+                emit printingFinished();
+            });
         });
     }
-    void loginFailed(){
-        badLoginText->setVisible(true);
-        box->clear();
-    }
-    void focusedOn(){
-        box->setFocus();
-    }
+signals:
+    void printingFinished();
 };
 
-class MainPage:public QWidget
-{
-    QVBoxLayout *layout;
-
-    MainWindow* window;
-    QPushButton* languageButton;
-    QPushButton* purchaseButton;
-    QPushButton* paincButton;
 
 
+class MainWindowController:public QWidget{
+    Q_OBJECT
+
+    QVBoxLayout layout;
+    QStackedWidget stack;
+
+    MainPage* mainPage;
+    LoginPage* loginPage;
+    LanguagesPage* languagesPage;
+    ChooseTicketPage* chooseTicketPage;
+    InputPersonalDataPage* inputPersonalDataPage;
+    PaymentPage* paymentPage;
+    PrintingPage* printingPage;
+
+    PlaceholderForLocalData localData;
+    Language language=Language::English;
+    std::vector<TicketData> availableTickets;
+
+
+    void completeLoginRetrieveData(const PlaceholderForLocalData& data){
+        localData=data;
+        availableTickets=retrieveTicketListFromServer();
+        goToMain();
+    }
+
+    //placeholder, I will later connect it to the backend. Ultimatly we want to be getting updates asynchronously.
+    std::vector<TicketData> retrieveTicketListFromServer(){
+        std::vector<TicketData> result;
+        result.push_back({"lorem",1});
+        result.push_back({"ipsum",2});
+        return result;
+    }
+
+    void goToMain(){
+        stack.setCurrentWidget(mainPage);
+    }
+
+    void goToLanguages(){
+        stack.setCurrentWidget(languagesPage);
+    }
+
+    void receiveLanguageChange(const Language& lang){
+        language=lang;
+        goToMain();
+    }
+
+    void goToPrintingPage(const FullPurchaseData& data){
+        printingPage->startPrinting(data);
+        stack.setCurrentWidget(printingPage);
+    }
+
+    void goToTakeCoinsPage(const FullPurchaseData& data){
+        paymentPage->reinitialize(data);
+        stack.setCurrentWidget(paymentPage);
+    }
+
+    void goToInputPersonalDataPage(const TicketData& data){
+        inputPersonalDataPage->reinitialize(data);
+        stack.setCurrentWidget(inputPersonalDataPage);
+    }
+
+    void generateAndGoToChooseTicketPage(){
+        chooseTicketPage->reinitialize(availableTickets);
+        stack.setCurrentWidget(chooseTicketPage);
+    }
 
 public:
-    MainPage(MainWindow* window):window(window){
-        layout = new QVBoxLayout(this);
-
-        languageButton = new QPushButton("Language "+QString::fromUcs4(U"\U0001F1FA\U0001F1F8"));
-        purchaseButton = new QPushButton("Buy ticket");
-        paincButton = new QPushButton("EXIT");
-
-        layout->addWidget(languageButton);
-        layout->addWidget(purchaseButton);
-        layout->addWidget(paincButton);
+    MainWindowController():layout(this){
         
-        connect(paincButton,&QPushButton::clicked,QApplication::quit);
-        connect(languageButton,&QPushButton::clicked,window,&MainWindow::goToLangPage);
-        connect(purchaseButton,&QPushButton::clicked,window,&MainWindow::goToChooseTicket);
+        //stack.addWidget() immidietly pass ownership to the stack
+        loginPage=new LoginPage;
+        stack.addWidget(loginPage);
+        connect(loginPage,&LoginPage::loggedIntoDatabase,this,&MainWindowController::completeLoginRetrieveData);
+        
+        mainPage=new MainPage;
+        stack.addWidget(mainPage);
+        connect(mainPage,&MainPage::languagesOption,this,&MainWindowController::goToLanguages);
+        connect(mainPage,&MainPage::purchaseOption,this,&MainWindowController::generateAndGoToChooseTicketPage);
+        
+        languagesPage=new LanguagesPage;
+        stack.addWidget(languagesPage);
+        connect(languagesPage,&LanguagesPage::languagePicked,this,&MainWindowController::receiveLanguageChange);
+
+        printingPage=new PrintingPage;
+        stack.addWidget(printingPage);
+        connect(printingPage,&PrintingPage::printingFinished,this,&MainWindowController::goToMain);
+
+        paymentPage=new PaymentPage();
+        stack.addWidget(paymentPage);
+        connect(paymentPage,&PaymentPage::cancelPressed,this,&MainWindowController::goToMain);
+        connect(paymentPage,&PaymentPage::coinsAccepted,this,&MainWindowController::goToPrintingPage);
+
+        inputPersonalDataPage=new InputPersonalDataPage();
+        stack.addWidget(inputPersonalDataPage);
+        connect(inputPersonalDataPage,&InputPersonalDataPage::cancelPressed,this,&MainWindowController::goToMain);
+        connect(inputPersonalDataPage,&InputPersonalDataPage::validPersonalDataSubmitted,this,&MainWindowController::goToTakeCoinsPage);
+
+        chooseTicketPage=new ChooseTicketPage();
+        connect(chooseTicketPage,&ChooseTicketPage::backPressed,this,&MainWindowController::goToMain);
+        connect(chooseTicketPage,&ChooseTicketPage::ticketPicked,this,&MainWindowController::goToInputPersonalDataPage);
+        stack.addWidget(chooseTicketPage);
+
+        stack.setCurrentWidget(loginPage);
+        layout.addWidget(&stack);
     }
 };
-
-
-
-
-class PriningTicketPage:public QWidget{
-    QVBoxLayout *layout;
-    MainWindow* window;
-public:
-    PriningTicketPage(MainWindow* window):window(window){
-        QVBoxLayout *layout=new QVBoxLayout(this);
-        QLabel* printingMessage=new QLabel("printing in progress...");
-        layout->addWidget(printingMessage);
-    }
-};
-
-MainWindow::MainWindow(){
-    layout = new QVBoxLayout(this);
-    stack=new QStackedWidget;
-    layout->addWidget(stack);
-    
-    loginPage=new LoginPage(this);
-    stack->addWidget(loginPage);
-    
-    mainPage=new MainPage(this);
-    stack->addWidget(mainPage);
-    
-    languagesPage=new LanguagesPage(this);
-    stack->addWidget(languagesPage);
-
-    stack->setCurrentWidget(loginPage);
-    loginPage->focusedOn();
-}
-
-void MainWindow::goToMainPage(){
-    cleanDynamicPages();
-    stack->setCurrentWidget(mainPage);
-}
-
-void MainWindow::loginToDB(const QString& dbID){
-    //placeholder
-    if(dbID == "temp"){
-        ticketsList=createTicketsList();
-
-        stack->setCurrentWidget(mainPage);
-    }else{
-        loginPage->loginFailed();
-    }
-}
- 
-void MainWindow::goToLangPage(){
-    cleanDynamicPages();
-    stack->setCurrentWidget(languagesPage);
-}
-
-void MainWindow::goToChooseTicket(){
-    cleanDynamicPages();
-
-    if(chooseTicketPage){
-        stack->removeWidget(chooseTicketPage);
-        delete chooseTicketPage;
-    }
-
-    chooseTicketPage=new ChooseTicketPage(this);
-    stack->addWidget(chooseTicketPage);
-
-    stack->setCurrentWidget(chooseTicketPage);
-}
-
-
-
-void MainWindow::cleanDynamicPages(){
-    for(auto& page:paymentPages){
-        stack->removeWidget(page);
-    }
-    paymentPages={};
-    for(auto& page:inputPersonalDataPages){
-        stack->removeWidget(page);
-    }
-    inputPersonalDataPages={};
-    for(auto& page:priningTicketPages){
-        stack->removeWidget(page);
-    }
-    priningTicketPages={};
-}
-PaymentPage::PaymentPage(MainWindow* Window,ticketData data,QString userName):window(Window){
-    layout = new QVBoxLayout(this);
-    //double is a floating point type so this is an error, but will work for now.
-    QString instructionText= "Please Insert $"+QString::fromStdString(to_string(((double)data.priceCents)/100));
-    QLabel* instruction=new QLabel(instructionText);
-
-    QPushButton* confirmBtn=new QPushButton("Confirm",this);
-    QPushButton* cancelBtn=new QPushButton("Done",this);
-
-    layout->addWidget(instruction,0,Qt::AlignCenter);
-    layout->addWidget(confirmBtn);
-    layout->addWidget(cancelBtn);
-
-    connect(confirmBtn,&QPushButton::clicked,window,[this](){
-        
-        if(true){//check if inputed number of coins is correct. for now true as a placeholder.
-
-            PriningTicketPage* nextPage=new PriningTicketPage(window);
-            window->priningTicketPages.push_back(nextPage);
-            window->stack->addWidget(nextPage);
-            window->stack->setCurrentWidget(nextPage);
-            QTimer::singleShot(3000,this,[this](){
-                window->goToMainPage();
-            });
-        }
-    });
-    connect(cancelBtn,&QPushButton::clicked,window,&MainWindow::goToMainPage);
-}
-
-InputPersonalDataPage::InputPersonalDataPage(MainWindow* Window,ticketData Data):window(Window),data(Data){
-    layout = new QVBoxLayout(this);
-
-
-
-    QString titleText = QString::fromStdString("Purchasing a ticket for ") + data.name;
-    QString instructionText = "Input name to be assigned to the ticket";
-    QLabel* title = new QLabel(titleText,this);
-    QLabel* instruction = new QLabel(instructionText,this);
-    QLineEdit* nameBox=new QLineEdit(this);
-    QPushButton* confirmBtn=new QPushButton("Confirm",this);
-    QPushButton* cancelBtn=new QPushButton("Cancel",this);
-    layout->addWidget(title,0,Qt::AlignCenter);
-    layout->addWidget(instruction);
-    layout->addWidget(nameBox);
-    layout->addWidget(confirmBtn);
-    layout->addWidget(cancelBtn);
-
-    connect(confirmBtn,&QPushButton::clicked,window,[this,nameBox](){
-        PaymentPage* nextPage= new PaymentPage(window,data,nameBox->text());
-        window->paymentPages.push_back(nextPage);
-        window->stack->addWidget(nextPage);
-        window->stack->setCurrentWidget(nextPage);
-    });
-    connect(cancelBtn,&QPushButton::clicked,window,&MainWindow::goToMainPage);
-}
-
-
 
 int main(int argc, char *argv[]){
     QApplication app(argc, argv);
-    MainWindow window;
+    MainWindowController window;
     window.show();
 
     return app.exec();
 }
 
-//outline/plan of a an app that is an apstraction of a vending machine for selling concert tickets. Basically we want something quick and simple to interact with the server and test things. And on personal level I want a milestone I can finish.
-
-//simple main function, just starts the window, nothing fancy
-
-//takes to the login page - apstraction, real one would just connect to the local database, but since we have multiple databases on the same machine we must somehow pick one. (for now databases not yet hooked-up)
-//login page takes to a loading screen while establishing connection with the server, and then to the menu page.
-
-//main page - menu. Disabled if there are no tickets avalible according to the server. Buttons, not necesarly in that order:
-//ADMIN EXIT - someone using the machine should not be able to turn it off, but since this in an app... (actually I'm not sure about this one, the X in top right should be enough, it's just style)
-//ADMIN SHOW_CONTENTS - Show data loaded from the database.
-//Language choice - placeholder button, functionally useless because it's too much work
-//Buy button
-
-//buy button takes to the list of buttons, one for each avalible tickets
-
-//you input all your data to be printed on the ticket and send to database and then insert coins. the ticket hets printed
+#include "main.moc"
