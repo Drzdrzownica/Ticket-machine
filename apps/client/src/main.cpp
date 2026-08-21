@@ -13,7 +13,15 @@
 
 
 //this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
-
+using Cents = quint32;
+QString centsToPriceString(const Cents& cents){
+    QString result=QString::number(cents/100);
+    result+=".";
+    if(cents%100<10)result+="0";
+    result+=QString::number(cents%100);
+    result+="$";
+    return result;
+}
 //just to look pretty, I won't bother implementing languages, at least I don't think I will.
 enum class Language{
     English=0
@@ -25,7 +33,6 @@ struct PlaceholderForLocalData{
 };
 
 struct TicketData{
-    using Cents = quint32;
     QString name;
     Cents price;
 };
@@ -130,24 +137,21 @@ class InputPersonalDataPage:public QWidget{
 
     QLabel title;
     QLineEdit inputField;
+    QLabel errorMessage{"The name can not be empty"};
     QPushButton confirmButton{"confirm"};
     QPushButton cancelButton{"Cancel"};
 
 
-    //placeholder fruction. Will update later
+    //Ultimatly the possible input will be restricted by the keyboard in the machine so user won't be able to use any unicode shenanigans
     bool verifyName(){
         if(inputField.text().isEmpty())return false;
-        for(auto c:inputField.text()){
-            if(c>='a' and c<='z')continue;
-            if(c>='A' and c<='Z')continue;
-            return false;
-        }
         return true;
     }
 
     void processSubmission(){
         if(verifyName()==false){
             inputField.clear();
+            errorMessage.setVisible(true);
         }else{
             FullPurchaseData data{ticketData,inputField.text()};
             emit validPersonalDataSubmitted(data);
@@ -157,6 +161,8 @@ public:
     InputPersonalDataPage():layout(this){
         layout.addWidget(&title);
         layout.addWidget(&inputField);
+        layout.addWidget(&errorMessage);
+        errorMessage.setVisible(false);
         layout.addWidget(&confirmButton);
         layout.addWidget(&cancelButton);
         connect(&cancelButton,&QPushButton::clicked,this,[this](){
@@ -171,8 +177,9 @@ public:
         );
     }
     void reinitialize(const TicketData& data){
+        errorMessage.setVisible(false);
         ticketData=data;
-        title.setText(data.name);
+        title.setText("Input name associated with the ticket for "+ data.name);
     }
 signals:
     void cancelPressed();
@@ -219,30 +226,75 @@ class PaymentPage: public QWidget{
     
     FullPurchaseData data;
 
-    QLabel info{"You are not supposed to see this message"};
+    QLabel instruction{"You are not supposed to see this message"};
+    QLineEdit coinSlot;
+    QPushButton insertButton{"insert"};
+    QLabel unknownCoinMessage{"The coin was rejected"};
+    QLabel insertedMessage{"You are not supposed to see this message"};
     QPushButton confirmButton{"confirm"};
     QPushButton cancelButton{"Cancel"};
     
+    Cents insertedAmount=0; 
+    
     //placeholder. For now accept blindly
     void tryAcceptPurchase(){
+        //if can give out change
         if(true){
+            //give out change
             emit coinsAccepted(data);
+        }else{
+            //go to refusal page and then to main menu
         }
     }
 
+    //placehilder
+    bool canGiveOutChange(){
+        return true;
+    }
+
+    Cents tryCoin(){
+        if(coinSlot.text()=="1")return 1;
+        if(coinSlot.text()=="5")return 5;
+        if(coinSlot.text()=="10")return 10;
+        if(coinSlot.text()=="25")return 25;
+        if(coinSlot.text()=="100")return 100;
+        if(coinSlot.text()=="500")return 500;
+        if(coinSlot.text()=="1000")return 1000;
+        if(coinSlot.text()=="2000")return 2000;
+        return 0;
+    }
+    
+    void processCoin(){
+        Cents coinVal=tryCoin();
+        coinSlot.setText("");
+        if(coinVal==0)unknownCoinMessage.setVisible(true);
+        else unknownCoinMessage.setVisible(false);
+        insertedAmount+=coinVal;
+        insertedMessage.setText("so far inserted "+centsToPriceString(insertedAmount));
+        if(insertedAmount>=data.ticketData.price)confirmButton.setDisabled(false);
+    }
+
+
+
 public:
     PaymentPage():layout(this){
-        layout.addWidget(&info);
+        layout.addWidget(&instruction);
+        layout.addWidget(&coinSlot);
+        coinSlot.setPlaceholderText("Enter value in cents representing a coin/bill");
+        layout.addWidget(&insertButton);
+        layout.addWidget(&insertedMessage);
         layout.addWidget(&confirmButton);
+        confirmButton.setDisabled(true);
         layout.addWidget(&cancelButton);
         connect(&cancelButton,&QPushButton::clicked,this,&PaymentPage::cancelPressed);
+        connect(&insertButton,&QPushButton::clicked,this,&PaymentPage::processCoin);
         connect(&confirmButton,&QPushButton::clicked,this,&PaymentPage::tryAcceptPurchase);
     }
     void reinitialize(const FullPurchaseData& data){
         this->data=data;
-        //for now coins because I don't want to bother with currency yet
-        info.setText("insert "+QString::number(data.ticketData.price)+" coins");
-
+        instruction.setText("insert "+centsToPriceString(data.ticketData.price)+" in coins or bills");
+        insertedAmount=0;
+        insertedMessage.setText("so far inserted "+centsToPriceString(insertedAmount));
     }
 signals:
     void cancelPressed();
@@ -259,7 +311,7 @@ public:
         layout.addWidget(&message);
     }
 
-    //This is obviously an abstarction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing.
+    //This is obviously an abstarction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
     void startPrinting(const FullPurchaseData& data){
         message.setText("Printing in progress...");
         QTimer::singleShot(3000, this, [this] {
