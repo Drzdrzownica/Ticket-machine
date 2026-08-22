@@ -14,17 +14,12 @@
 
 //this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
 using Cents = quint32;
-QString centsToPriceString(const Cents& cents){
-    QString result=QString::number(cents/100);
-    result+=".";
-    if(cents%100<10)result+="0";
-    result+=QString::number(cents%100);
-    result+="$";
-    return result;
+QString centsToPriceString(Cents cents){
+    return QString("$%1.%2").arg(cents/100).arg(cents%100,2,10,QChar('0'));
 }
 //just to look pretty, I won't bother implementing languages, at least I don't think I will.
 enum class Language{
-    English=0
+    English
 };
 
 //stuff like, what coins the machine contains (if it can output exact change), etc. This and all other structs below are essentially placeholders for now.
@@ -49,18 +44,18 @@ class MainPage:public QWidget{
     QVBoxLayout layout;
 
     //languages are a non-functional placeholde (since a page with a single option seems redundant,and I still want to have a main page)
-    QPushButton languagesBtn{"Languages"};
-    QPushButton purchaseBtn{"Buy ticket"};
-    QPushButton exitBtn{"EXIT"};
+    QPushButton* languagesBtn =new QPushButton("Languages",this);
+    QPushButton* purchaseBtn = new QPushButton("Buy ticket",this);
+    QPushButton* exitBtn=new QPushButton("EXIT",this);
 
 public:
     MainPage():layout(this){
-        layout.addWidget(&languagesBtn);
-        layout.addWidget(&purchaseBtn);
-        layout.addWidget(&exitBtn);
-        connect(&languagesBtn,&QPushButton::clicked,this,&MainPage::languagesOption);
-        connect(&purchaseBtn,&QPushButton::clicked,this,&MainPage::purchaseOption);
-        connect(&exitBtn,&QPushButton::clicked,&QApplication::quit);
+        layout.addWidget(languagesBtn);
+        layout.addWidget(purchaseBtn);
+        layout.addWidget(exitBtn);
+        connect(languagesBtn,&QPushButton::clicked,this,&MainPage::languagesOption);
+        connect(purchaseBtn,&QPushButton::clicked,this,&MainPage::purchaseOption);
+        connect(exitBtn,&QPushButton::clicked,&QApplication::quit);
     }
 signals:
     void languagesOption();
@@ -72,12 +67,12 @@ class LanguagesPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
 
-    QPushButton englishBtn{"English "+QString::fromUcs4(U"\U0001F1FA\U0001F1F8")};
+    QPushButton* englishBtn=new QPushButton("English "+QString::fromUcs4(U"\U0001F1FA\U0001F1F8"),this);
 
 public:
     LanguagesPage():layout(this){
-        layout.addWidget(&englishBtn);
-        connect(&englishBtn,&QPushButton::clicked,this,[this](){emit languagePicked(Language::English);});
+        layout.addWidget(englishBtn);
+        connect(englishBtn,&QPushButton::clicked,this,[this](){emit languagePicked(Language::English);});
     }
 signals:
     void languagePicked(Language);
@@ -86,16 +81,16 @@ signals:
 class ChooseTicketPage: public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
-    QVBoxLayout buttonsLayout;
+    QVBoxLayout* buttonsLayout;
     
-    QLabel errorMessage{"Sorry, no tickets available"};
-    QPushButton backButton{"Back"};
+    QLabel* errorMessage=new QLabel("Sorry, no tickets available");
+    QPushButton* backButton=new QPushButton("Back",this);
 
     std::vector<QPushButton*> ticketButtons;
 
     void clearTicketButtons(){
         for(auto* btn:ticketButtons){
-            buttonsLayout.removeWidget(btn);
+            buttonsLayout->removeWidget(btn);
             btn->deleteLater();
         }
         ticketButtons.clear();
@@ -103,23 +98,24 @@ class ChooseTicketPage: public QWidget{
 
 public:
     ChooseTicketPage():layout(this){
-        layout.addLayout(&buttonsLayout);
-        layout.addWidget(&errorMessage);
-        layout.addWidget(&backButton);
-        connect(&backButton,&QPushButton::clicked,this,&ChooseTicketPage::backPressed);
+        buttonsLayout=new QVBoxLayout;
+        layout.addLayout(buttonsLayout);
+        layout.addWidget(errorMessage);
+        layout.addWidget(backButton);
+        connect(backButton,&QPushButton::clicked,this,&ChooseTicketPage::backPressed);
     }
     void reinitialize(const std::vector<TicketData>& data){
         clearTicketButtons();
         if(data.empty()){
-            errorMessage.setVisible(true);
+            errorMessage->setVisible(true);
         }else{
-            errorMessage.setVisible(false);
-            for(auto& ticket:data){
+            errorMessage->setVisible(false);
+            for(const auto& ticket:data){
                 QPushButton* btn=new QPushButton(ticket.name,this);
                 ticketButtons.push_back(btn);
-                buttonsLayout.addWidget(btn);
+                buttonsLayout->addWidget(btn);
                 connect(btn,&QPushButton::clicked,this,[this,ticket](){
-                    emit this->ticketPicked(ticket);
+                    emit ticketPicked(ticket);
                 });
             }
         }
@@ -135,86 +131,86 @@ class InputPersonalDataPage:public QWidget{
 
     TicketData ticketData;
 
-    QLabel title;
-    QLineEdit inputField;
-    QLabel errorMessage{"The name can not be empty"};
-    QPushButton confirmButton{"confirm"};
-    QPushButton cancelButton{"Cancel"};
+    QLabel* title=new QLabel(this);
+    QLineEdit* inputField=new QLineEdit(this) ;
+    QLabel* errorMessage=new QLabel("The name can not be empty",this);
+    QPushButton* confirmButton = new QPushButton("confirm",this);
+    QPushButton* cancelButton= new QPushButton("Cancel",this);
 
 
     //Ultimatly the possible input will be restricted by the keyboard in the machine so user won't be able to use any unicode shenanigans
     bool verifyName(){
-        if(inputField.text().isEmpty())return false;
+        if(inputField->text().isEmpty())return false;
         return true;
     }
 
     void processSubmission(){
         if(verifyName()==false){
-            inputField.clear();
-            errorMessage.setVisible(true);
+            inputField->clear();
+            errorMessage->setVisible(true);
         }else{
-            FullPurchaseData data{ticketData,inputField.text()};
-            emit validPersonalDataSubmitted(data);
+            FullPurchaseData data{ticketData,inputField->text()};
+            emit personalDataConfirmed(data);
         }
     }
 public:
     InputPersonalDataPage():layout(this){
-        layout.addWidget(&title);
-        layout.addWidget(&inputField);
-        layout.addWidget(&errorMessage);
-        errorMessage.setVisible(false);
-        layout.addWidget(&confirmButton);
-        layout.addWidget(&cancelButton);
-        connect(&cancelButton,&QPushButton::clicked,this,[this](){
-            inputField.setText("");
+        layout.addWidget(title);
+        layout.addWidget(inputField);
+        layout.addWidget(errorMessage);
+        errorMessage->setVisible(false);
+        layout.addWidget(confirmButton);
+        layout.addWidget(cancelButton);
+        connect(cancelButton,&QPushButton::clicked,this,[this](){
+            inputField->setText("");
             emit cancelPressed();
         }
         );
-        connect(&confirmButton,&QPushButton::clicked,this,[this](){
+        connect(confirmButton,&QPushButton::clicked,this,[this](){
             processSubmission();
-            inputField.setText("");
+            inputField->setText("");
         }
         );
     }
     void reinitialize(const TicketData& data){
-        errorMessage.setVisible(false);
+        errorMessage->setVisible(false);
         ticketData=data;
-        title.setText("Input name associated with the ticket for "+ data.name);
+        title->setText("Input name associated with the ticket for "+ data.name);
     }
 signals:
     void cancelPressed();
-    void validPersonalDataSubmitted(FullPurchaseData);
+    void personalDataConfirmed(FullPurchaseData);
 };
 
 class LoginPage: public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
-    QLabel instruction{"Enter The DB id"};
-    QLineEdit inputBox;
-    QLabel tryAgainMessage{"No DB with given ID. Try again"};
-    QPushButton loginButton{"login"};
+    QLabel* instruction=new QLabel("Enter The DB id",this);
+    QLineEdit* inputBox=new QLineEdit(this);
+    QLabel* tryAgainMessage=new QLabel("No DB with given ID. Try again",this);
+    QPushButton* loginButton=new QPushButton("login",this);
 
     void loginClicked(){
         //for now placeholder, later try to log into the local db and retrieve real data. /
         //The DB is just local storage, but since this is just a simulation of a real machine, /
         //there can be multiple machines with multiple DBs simulated on a single PC so we have to diferentiate them
-        if(inputBox.text()=="temp"){
+        if(inputBox->text()=="temp"){
             PlaceholderForLocalData temp=PlaceholderForLocalData{};
-            tryAgainMessage.setVisible(false);
+            tryAgainMessage->setVisible(false);
             emit loggedIntoDatabase(temp);
         }else{
-            tryAgainMessage.setVisible(true);
+            tryAgainMessage->setVisible(true);
         }
     }
 
 public:
     LoginPage():layout(this){
-        layout.addWidget(&instruction);
-        layout.addWidget(&inputBox);
-        layout.addWidget(&tryAgainMessage);
-        layout.addWidget(&loginButton);
-        tryAgainMessage.setVisible(false);
-        connect(&loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
+        layout.addWidget(instruction);
+        layout.addWidget(inputBox);
+        layout.addWidget(tryAgainMessage);
+        layout.addWidget(loginButton);
+        tryAgainMessage->setVisible(false);
+        connect(loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
     }
 signals:
     void loggedIntoDatabase(PlaceholderForLocalData);
@@ -226,13 +222,13 @@ class PaymentPage: public QWidget{
     
     FullPurchaseData data;
 
-    QLabel instruction{"You are not supposed to see this message"};
-    QLineEdit coinSlot;
-    QPushButton insertButton{"insert"};
-    QLabel unknownCoinMessage{"The coin was rejected"};
-    QLabel insertedMessage{"You are not supposed to see this message"};
-    QPushButton confirmButton{"confirm"};
-    QPushButton cancelButton{"Cancel"};
+    QLabel* instruction=new QLabel("You are not supposed to see this message",this);
+    QLineEdit* coinSlot=new QLineEdit(this);
+    QPushButton* insertButton=new QPushButton("insert",this);
+    QLabel* unknownCoinMessage=new QLabel("The coin was rejected",this);
+    QLabel* insertedMessage=new QLabel("You are not supposed to see this message",this);
+    QPushButton* confirmButton= new QPushButton("confirm",this);
+    QPushButton* cancelButton=new QPushButton("Cancel",this);
     
     Cents insertedAmount=0; 
     
@@ -241,7 +237,7 @@ class PaymentPage: public QWidget{
         //if can give out change
         if(true){
             //give out change
-            emit coinsAccepted(data);
+            emit paymentCompleted(data);
         }else{
             //go to refusal page and then to main menu
         }
@@ -252,70 +248,75 @@ class PaymentPage: public QWidget{
         return true;
     }
 
-    Cents tryCoin(){
-        if(coinSlot.text()=="1")return 1;
-        if(coinSlot.text()=="5")return 5;
-        if(coinSlot.text()=="10")return 10;
-        if(coinSlot.text()=="25")return 25;
-        if(coinSlot.text()=="100")return 100;
-        if(coinSlot.text()=="500")return 500;
-        if(coinSlot.text()=="1000")return 1000;
-        if(coinSlot.text()=="2000")return 2000;
-        return 0;
+    std::optional<Cents> tryCoin(){
+        if(coinSlot->text()=="1")return 1;
+        if(coinSlot->text()=="5")return 5;
+        if(coinSlot->text()=="10")return 10;
+        if(coinSlot->text()=="25")return 25;
+        if(coinSlot->text()=="100")return 100;
+        if(coinSlot->text()=="500")return 500;
+        if(coinSlot->text()=="1000")return 1000;
+        if(coinSlot->text()=="2000")return 2000;
+        return std::nullopt;
     }
     
     void processCoin(){
-        Cents coinVal=tryCoin();
-        coinSlot.setText("");
-        if(coinVal==0)unknownCoinMessage.setVisible(true);
-        else unknownCoinMessage.setVisible(false);
-        insertedAmount+=coinVal;
-        insertedMessage.setText("so far inserted "+centsToPriceString(insertedAmount));
-        if(insertedAmount>=data.ticketData.price)confirmButton.setDisabled(false);
+        std::optional<Cents> coin=tryCoin();
+        coinSlot->setText("");
+        if(!coin){
+            unknownCoinMessage->setVisible(true);
+            return;
+        }else unknownCoinMessage->setVisible(false);
+        insertedAmount+=coin.value();
+        insertedMessage->setText("so far inserted "+centsToPriceString(insertedAmount));
+        if(insertedAmount>=data.ticketData.price)confirmButton->setDisabled(false);
     }
 
 
 
 public:
     PaymentPage():layout(this){
-        layout.addWidget(&instruction);
-        layout.addWidget(&coinSlot);
-        coinSlot.setPlaceholderText("Enter value in cents representing a coin/bill");
-        layout.addWidget(&insertButton);
-        layout.addWidget(&insertedMessage);
-        layout.addWidget(&confirmButton);
-        confirmButton.setDisabled(true);
-        layout.addWidget(&cancelButton);
-        connect(&cancelButton,&QPushButton::clicked,this,&PaymentPage::cancelPressed);
-        connect(&insertButton,&QPushButton::clicked,this,&PaymentPage::processCoin);
-        connect(&confirmButton,&QPushButton::clicked,this,&PaymentPage::tryAcceptPurchase);
+        layout.addWidget(instruction);
+        layout.addWidget(coinSlot);
+        coinSlot->setPlaceholderText("Enter value in cents representing a coin/bill");
+        layout.addWidget(unknownCoinMessage);
+        unknownCoinMessage->setVisible(false);
+        layout.addWidget(insertButton);
+        layout.addWidget(insertedMessage);
+        layout.addWidget(confirmButton);
+        confirmButton->setDisabled(true);
+        layout.addWidget(cancelButton);
+        connect(cancelButton,&QPushButton::clicked,this,&PaymentPage::cancelPressed);
+        connect(insertButton,&QPushButton::clicked,this,&PaymentPage::processCoin);
+        connect(confirmButton,&QPushButton::clicked,this,&PaymentPage::tryAcceptPurchase);
     }
     void reinitialize(const FullPurchaseData& data){
         this->data=data;
-        instruction.setText("insert "+centsToPriceString(data.ticketData.price)+" in coins or bills");
+        instruction->setText("insert "+centsToPriceString(data.ticketData.price)+" in coins or bills");
         insertedAmount=0;
-        insertedMessage.setText("so far inserted "+centsToPriceString(insertedAmount));
+        confirmButton->setDisabled(true);
+        insertedMessage->setText("so far inserted "+centsToPriceString(insertedAmount));
     }
 signals:
     void cancelPressed();
-    void coinsAccepted(FullPurchaseData);
+    void paymentCompleted(FullPurchaseData);
 };
 
 class PrintingPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
-    QLabel message{"You are not supposed to see this message"};
+    QLabel* message=new QLabel("You are not supposed to see this message",this);
 
 public:
     PrintingPage():layout(this){
-        layout.addWidget(&message);
+        layout.addWidget(message);
     }
 
     //This is obviously an abstarction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
     void startPrinting(const FullPurchaseData& data){
-        message.setText("Printing in progress...");
+        message->setText("Printing in progress...");
         QTimer::singleShot(3000, this, [this] {
-            message.setText("Printing Done");
+            message->setText("Printing Done");
             QTimer::singleShot(2000, this, [this] {
                 emit printingFinished();
             });
@@ -368,7 +369,7 @@ class MainWindowController:public QWidget{
         stack.setCurrentWidget(languagesPage);
     }
 
-    void receiveLanguageChange(const Language& lang){
+    void receiveLanguageChange(Language lang){
         language=lang;
         goToMain();
     }
@@ -417,12 +418,12 @@ public:
         paymentPage=new PaymentPage();
         stack.addWidget(paymentPage);
         connect(paymentPage,&PaymentPage::cancelPressed,this,&MainWindowController::goToMain);
-        connect(paymentPage,&PaymentPage::coinsAccepted,this,&MainWindowController::goToPrintingPage);
+        connect(paymentPage,&PaymentPage::paymentCompleted,this,&MainWindowController::goToPrintingPage);
 
         inputPersonalDataPage=new InputPersonalDataPage();
         stack.addWidget(inputPersonalDataPage);
         connect(inputPersonalDataPage,&InputPersonalDataPage::cancelPressed,this,&MainWindowController::goToMain);
-        connect(inputPersonalDataPage,&InputPersonalDataPage::validPersonalDataSubmitted,this,&MainWindowController::goToTakeCoinsPage);
+        connect(inputPersonalDataPage,&InputPersonalDataPage::personalDataConfirmed,this,&MainWindowController::goToTakeCoinsPage);
 
         chooseTicketPage=new ChooseTicketPage();
         connect(chooseTicketPage,&ChooseTicketPage::backPressed,this,&MainWindowController::goToMain);
