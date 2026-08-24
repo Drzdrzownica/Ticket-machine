@@ -38,7 +38,6 @@ struct FullPurchaseData{
 };
 
 
-
 class MainPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
@@ -193,7 +192,7 @@ class LoginPage: public QWidget{
     void loginClicked(){
         //for now placeholder, later try to log into the local db and retrieve real data. /
         //The DB is just local storage, but since this is just a simulation of a real machine, /
-        //there can be multiple machines with multiple DBs simulated on a single PC so we have to diferentiate them
+        //there can be multiple machines with multiple DBs simulated on a single PC so we have to differentiate them
         if(inputBox->text()=="temp"){
             PlaceholderForLocalData temp=PlaceholderForLocalData{};
             tryAgainMessage->setVisible(false);
@@ -230,49 +229,10 @@ class PaymentPage: public QWidget{
     QPushButton* confirmButton= new QPushButton("confirm",this);
     QPushButton* cancelButton=new QPushButton("Cancel",this);
     
-    Cents insertedAmount=0; 
-    
-    //placeholder. For now accept blindly
-    void tryAcceptPurchase(){
-        //if can give out change
-        if(true){
-            //give out change
-            emit paymentCompleted(data);
-        }else{
-            //go to refusal page and then to main menu
-        }
-    }
-
-    //placehilder
-    bool canGiveOutChange(){
-        return true;
-    }
-
-    std::optional<Cents> tryCoin(){
-        if(coinSlot->text()=="1")return 1;
-        if(coinSlot->text()=="5")return 5;
-        if(coinSlot->text()=="10")return 10;
-        if(coinSlot->text()=="25")return 25;
-        if(coinSlot->text()=="100")return 100;
-        if(coinSlot->text()=="500")return 500;
-        if(coinSlot->text()=="1000")return 1000;
-        if(coinSlot->text()=="2000")return 2000;
-        return std::nullopt;
-    }
-    
     void processCoin(){
-        std::optional<Cents> coin=tryCoin();
+        emit denominationInserted(coinSlot->text());
         coinSlot->setText("");
-        if(!coin){
-            unknownCoinMessage->setVisible(true);
-            return;
-        }else unknownCoinMessage->setVisible(false);
-        insertedAmount+=coin.value();
-        insertedMessage->setText("so far inserted "+centsToPriceString(insertedAmount));
-        if(insertedAmount>=data.ticketData.price)confirmButton->setDisabled(false);
-    }
-
-
+}   
 
 public:
     PaymentPage():layout(this){
@@ -288,18 +248,37 @@ public:
         layout.addWidget(cancelButton);
         connect(cancelButton,&QPushButton::clicked,this,&PaymentPage::cancelPressed);
         connect(insertButton,&QPushButton::clicked,this,&PaymentPage::processCoin);
-        connect(confirmButton,&QPushButton::clicked,this,&PaymentPage::tryAcceptPurchase);
+        connect(confirmButton,&QPushButton::clicked,this,&PaymentPage::confirmPressed);
     }
     void reinitialize(const FullPurchaseData& data){
         this->data=data;
         instruction->setText("insert "+centsToPriceString(data.ticketData.price)+" in coins or bills");
-        insertedAmount=0;
         confirmButton->setDisabled(true);
-        insertedMessage->setText("so far inserted "+centsToPriceString(insertedAmount));
+        insertedMessage->setText("so far inserted $0.00");
+        emit transactionStarted(data.ticketData.price);
     }
 signals:
     void cancelPressed();
     void paymentCompleted(FullPurchaseData);
+
+    void denominationInserted(QString);
+    void confirmPressed();
+    void transactionStarted(Cents);
+
+public slots:
+    void amountInsertedChanged(Cents insertedAmount){
+        insertedMessage->setText("so far inserted "+centsToPriceString(insertedAmount));
+        unknownCoinMessage->setVisible(false);
+        if(insertedAmount>=data.ticketData.price)confirmButton->setDisabled(false);
+    }
+    void unknownCoin(){
+        unknownCoinMessage->setVisible(true);
+    }
+
+    void purchaseSuccesful(){
+        emit paymentCompleted(data);
+    }
+
 };
 
 class PrintingPage:public QWidget{
@@ -312,7 +291,7 @@ public:
         layout.addWidget(message);
     }
 
-    //This is obviously an abstarction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
+    //This is obviously an abstraction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
     void startPrinting(const FullPurchaseData& data){
         message->setText("Printing in progress...");
         QTimer::singleShot(3000, this, [this] {
@@ -326,6 +305,80 @@ signals:
     void printingFinished();
 };
 
+
+class PaymentProcessor:public QObject{
+Q_OBJECT
+Cents amountCurrentlyInserted=0;
+Cents ticketCost=0;
+
+std::optional<Cents> identifyCoin(const QString& coin){
+    if(coin=="1")return 1;
+    if(coin=="5")return 5;
+    if(coin=="10")return 10;
+    if(coin=="25")return 25;
+    if(coin=="100")return 100;
+    if(coin=="500")return 500;
+    if(coin=="1000")return 1000;
+    if(coin=="2000")return 2000;
+    return std::nullopt;
+}
+
+public:
+PaymentProcessor(QObject* parent=nullptr):QObject(parent){}
+
+using placeholderChangeType = int;//will make it a real one later
+std::optional<placeholderChangeType> canGiveOutChange(){
+    return 0;
+}
+
+signals:
+
+void amountInsertedChanged(Cents newValue);
+void invalidCoinInserted();
+void purchaseCompleted();
+
+public slots:
+
+    void tryCoin(const QString& coin){
+        auto coinVal=identifyCoin(coin);
+        if(!coinVal){
+            emit invalidCoinInserted();
+        }else{
+            amountCurrentlyInserted+=coinVal.value();
+            if(coinVal.value()!=0)emit amountInsertedChanged(amountCurrentlyInserted); //there are no 0-cent coins so the check is unnecesary but it's there for compleatness
+        }
+    }
+
+    //placeholder. For now accept blindly
+    void tryAcceptPurchase(){
+        //if can give out change
+
+        if(amountCurrentlyInserted<ticketCost){
+            //emit ...
+        }else{
+            auto change=canGiveOutChange();
+            if(!change){
+                //emit ...
+            }else{
+                //give out change
+                amountCurrentlyInserted=0;
+                emit purchaseCompleted();
+            }
+        }
+    }
+
+    void cancelTransaction(){
+        //return coins
+        amountCurrentlyInserted=0;
+
+    }
+
+    void startTransaction(Cents cost){
+        if(amountCurrentlyInserted!=0);//hande error. todo
+        amountCurrentlyInserted=0;
+        ticketCost=cost;
+    }
+};
 
 
 class MainWindowController:public QWidget{
@@ -342,6 +395,8 @@ class MainWindowController:public QWidget{
     PaymentPage* paymentPage;
     PrintingPage* printingPage;
 
+    PaymentProcessor* paymentProcessor;
+
     PlaceholderForLocalData localData;
     Language language=Language::English;
     std::vector<TicketData> availableTickets;
@@ -353,7 +408,7 @@ class MainWindowController:public QWidget{
         goToMain();
     }
 
-    //placeholder, I will later connect it to the backend. Ultimatly we want to be getting updates asynchronously.
+    //placeholder, I will later connect it to the backend. Ultimately we want to be getting updates asynchronously.
     std::vector<TicketData> retrieveTicketListFromServer(){
         std::vector<TicketData> result;
         result.push_back({"lorem",1});
@@ -397,7 +452,9 @@ class MainWindowController:public QWidget{
 public:
     MainWindowController():layout(this){
         
-        //stack.addWidget() immidietly pass ownership to the stack
+        paymentProcessor= new PaymentProcessor(this);
+
+        //stack.addWidget() immidietly passes ownership to the stack
         loginPage=new LoginPage;
         stack.addWidget(loginPage);
         connect(loginPage,&LoginPage::loggedIntoDatabase,this,&MainWindowController::completeLoginRetrieveData);
@@ -419,6 +476,15 @@ public:
         stack.addWidget(paymentPage);
         connect(paymentPage,&PaymentPage::cancelPressed,this,&MainWindowController::goToMain);
         connect(paymentPage,&PaymentPage::paymentCompleted,this,&MainWindowController::goToPrintingPage);
+        
+        connect(paymentPage,&PaymentPage::cancelPressed,paymentProcessor,&PaymentProcessor::cancelTransaction);
+        connect(paymentPage,&PaymentPage::denominationInserted,paymentProcessor,&PaymentProcessor::tryCoin);
+        connect(paymentPage,&PaymentPage::confirmPressed,paymentProcessor,&PaymentProcessor::tryAcceptPurchase);
+        connect(paymentPage,&PaymentPage::transactionStarted,paymentProcessor,&PaymentProcessor::startTransaction);
+        connect(paymentProcessor,&PaymentProcessor::invalidCoinInserted,paymentPage,&PaymentPage::unknownCoin);
+        connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,paymentPage,&PaymentPage::purchaseSuccesful);
+        connect(paymentProcessor,&PaymentProcessor::amountInsertedChanged,paymentPage,&PaymentPage::amountInsertedChanged);
+
 
         inputPersonalDataPage=new InputPersonalDataPage();
         stack.addWidget(inputPersonalDataPage);
