@@ -32,11 +32,6 @@ struct TicketData{
     Cents price;
 };
 
-struct FullPurchaseData{
-    TicketData ticketData;
-    QString buyerName;
-};
-
 
 class MainPage:public QWidget{
     Q_OBJECT
@@ -54,6 +49,7 @@ public:
         layout.addWidget(exitBtn);
         connect(languagesBtn,&QPushButton::clicked,this,&MainPage::languagesOption);
         connect(purchaseBtn,&QPushButton::clicked,this,&MainPage::purchaseOption);
+        //it's fine here to hard quit because in real hardware this button would not exist
         connect(exitBtn,&QPushButton::clicked,&QApplication::quit);
     }
 signals:
@@ -61,19 +57,23 @@ signals:
     void purchaseOption();
 };
 
-
+ 
 class LanguagesPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
 
     QPushButton* englishBtn=new QPushButton("English "+QString::fromUcs4(U"\U0001F1FA\U0001F1F8"),this);
+    QPushButton* backButton=new QPushButton("Back",this);
 
 public:
     LanguagesPage():layout(this){
         layout.addWidget(englishBtn);
+        layout.addWidget(backButton);
         connect(englishBtn,&QPushButton::clicked,this,[this](){emit languagePicked(Language::English);});
+        connect(backButton,&QPushButton::clicked,this,&LanguagesPage::backPressed);
     }
 signals:
+    void backPressed();
     void languagePicked(Language);
 };
 
@@ -103,13 +103,13 @@ public:
         layout.addWidget(backButton);
         connect(backButton,&QPushButton::clicked,this,&ChooseTicketPage::backPressed);
     }
-    void reinitialize(const std::vector<TicketData>& data){
+    void reinitialize(const std::vector<TicketData>& listOfTickets){
         clearTicketButtons();
-        if(data.empty()){
+        if(listOfTickets.empty()){
             errorMessage->setVisible(true);
         }else{
             errorMessage->setVisible(false);
-            for(const auto& ticket:data){
+            for(const auto& ticket:listOfTickets){
                 QPushButton* btn=new QPushButton(ticket.name,this);
                 ticketButtons.push_back(btn);
                 buttonsLayout->addWidget(btn);
@@ -136,22 +136,6 @@ class InputPersonalDataPage:public QWidget{
     QPushButton* confirmButton = new QPushButton("confirm",this);
     QPushButton* cancelButton= new QPushButton("Cancel",this);
 
-
-    //Ultimatly the possible input will be restricted by the keyboard in the machine so user won't be able to use any unicode shenanigans
-    bool verifyName(){
-        if(inputField->text().isEmpty())return false;
-        return true;
-    }
-
-    void processSubmission(){
-        if(verifyName()==false){
-            inputField->clear();
-            errorMessage->setVisible(true);
-        }else{
-            FullPurchaseData data{ticketData,inputField->text()};
-            emit personalDataConfirmed(data);
-        }
-    }
 public:
     InputPersonalDataPage():layout(this){
         layout.addWidget(title);
@@ -166,7 +150,7 @@ public:
         }
         );
         connect(confirmButton,&QPushButton::clicked,this,[this](){
-            processSubmission();
+            emit personalDataSubmitted(inputField->text());
             inputField->setText("");
         }
         );
@@ -178,7 +162,12 @@ public:
     }
 signals:
     void cancelPressed();
-    void personalDataConfirmed(FullPurchaseData);
+    void personalDataSubmitted(QString name);
+public slots:
+    //later we might pass some reason, but for now we assume it's because it was empty
+    void submittedNameNotAccepted(){
+        errorMessage->setVisible(true);
+    }
 };
 
 class LoginPage: public QWidget{
@@ -219,7 +208,6 @@ class PaymentPage: public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
     
-    FullPurchaseData data;
 
     QLabel* instruction=new QLabel("You are not supposed to see this message",this);
     QLineEdit* coinSlot=new QLineEdit(this);
@@ -250,33 +238,27 @@ public:
         connect(insertButton,&QPushButton::clicked,this,&PaymentPage::processCoin);
         connect(confirmButton,&QPushButton::clicked,this,&PaymentPage::confirmPressed);
     }
-    void reinitialize(const FullPurchaseData& data){
-        this->data=data;
-        instruction->setText("insert "+centsToPriceString(data.ticketData.price)+" in coins or bills");
+    void reinitialize(const TicketData& data){
+        instruction->setText("insert "+centsToPriceString(data.price)+" in coins or bills");
         confirmButton->setDisabled(true);
         insertedMessage->setText("so far inserted $0.00");
-        emit transactionStarted(data.ticketData.price);
+        emit transactionStarted();
     }
 signals:
     void cancelPressed();
-    void paymentCompleted(FullPurchaseData);
 
     void denominationInserted(QString);
     void confirmPressed();
-    void transactionStarted(Cents);
+    void transactionStarted();
 
 public slots:
-    void amountInsertedChanged(Cents insertedAmount){
+    void amountInsertedChanged(Cents insertedAmount,bool isEnough){
         insertedMessage->setText("so far inserted "+centsToPriceString(insertedAmount));
         unknownCoinMessage->setVisible(false);
-        if(insertedAmount>=data.ticketData.price)confirmButton->setDisabled(false);
+        if(isEnough)confirmButton->setDisabled(false);
     }
     void unknownCoin(){
         unknownCoinMessage->setVisible(true);
-    }
-
-    void purchaseSuccesful(){
-        emit paymentCompleted(data);
     }
 
 };
@@ -292,7 +274,7 @@ public:
     }
 
     //This is obviously an abstraction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
-    void startPrinting(const FullPurchaseData& data){
+    void startPrinting(){
         message->setText("Printing in progress...");
         QTimer::singleShot(3000, this, [this] {
             message->setText("Printing Done");
@@ -311,18 +293,6 @@ Q_OBJECT
 Cents amountCurrentlyInserted=0;
 Cents ticketCost=0;
 
-std::optional<Cents> identifyCoin(const QString& coin){
-    if(coin=="1")return 1;
-    if(coin=="5")return 5;
-    if(coin=="10")return 10;
-    if(coin=="25")return 25;
-    if(coin=="100")return 100;
-    if(coin=="500")return 500;
-    if(coin=="1000")return 1000;
-    if(coin=="2000")return 2000;
-    return std::nullopt;
-}
-
 public:
 PaymentProcessor(QObject* parent=nullptr):QObject(parent){}
 
@@ -333,20 +303,15 @@ std::optional<placeholderChangeType> canGiveOutChange(){
 
 signals:
 
-void amountInsertedChanged(Cents newValue);
+void amountInsertedChanged(Cents newValue,bool isEnough);
 void invalidCoinInserted();
 void purchaseCompleted();
 
 public slots:
 
-    void tryCoin(const QString& coin){
-        auto coinVal=identifyCoin(coin);
-        if(!coinVal){
-            emit invalidCoinInserted();
-        }else{
-            amountCurrentlyInserted+=coinVal.value();
-            if(coinVal.value()!=0)emit amountInsertedChanged(amountCurrentlyInserted); //there are no 0-cent coins so the check is unnecesary but it's there for compleatness
-        }
+    void insertCoin(Cents coinVal){
+        amountCurrentlyInserted+=coinVal;
+        if(coinVal!=0)emit amountInsertedChanged(amountCurrentlyInserted,amountCurrentlyInserted>=ticketCost); //there are no 0-cent coins so the check is unnecesary but it's there for compleatness
     }
 
     //placeholder. For now accept blindly
@@ -380,8 +345,123 @@ public slots:
     }
 };
 
+class SessionController:public QObject{
+Q_OBJECT
+    PlaceholderForLocalData localData;
+    Language language=Language::English;    
+    std::vector<TicketData> availableTickets;
+    TicketData currentTicket;
+    PaymentProcessor* paymentProcessor;
 
-class MainWindowController:public QWidget{
+    //placeholder, I will later connect it to the backend. Ultimately we want to be getting updates asynchronously.
+    std::vector<TicketData> retrieveTicketListFromServer(){
+        std::vector<TicketData> result;
+        result.push_back({"lorem",1});
+        result.push_back({"ipsum",2});
+        return result;
+    }
+
+    std::optional<Cents> identifyCoin(const QString& coin){
+        if(coin=="1")return 1;
+        if(coin=="5")return 5;
+        if(coin=="10")return 10;
+        if(coin=="25")return 25;
+        if(coin=="100")return 100;
+        if(coin=="500")return 500;
+        if(coin=="1000")return 1000;
+        if(coin=="2000")return 2000;
+        return std::nullopt;
+    }
+
+    //Ultimatly the possible input will be restricted by the keyboard in the machine so user won't be able to use any unicode shenanigans
+    bool verifyName(QString name){
+        if(name.isEmpty())return false;
+        return true;
+    }
+
+public:
+
+    const std::vector<TicketData>& getAvailableTickets() const {
+        return availableTickets;
+    }
+
+    Language getLanguage() const {
+        return language;
+    }
+    
+    SessionController(QObject* parent=nullptr):QObject(parent){
+        paymentProcessor= new PaymentProcessor(this);
+        connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,this,&SessionController::purchaseCompleted);
+        connect(paymentProcessor,&PaymentProcessor::amountInsertedChanged,this,&SessionController::amountInsertedChanged);
+    }
+
+public slots:
+
+    void loginSucceded(const PlaceholderForLocalData& data){
+        localData=data;
+        availableTickets=retrieveTicketListFromServer();
+        //todo: subsiribe to list updates from the server
+        emit sessionReady();
+    }
+
+    void languageChanged(Language lang){
+        language=lang;
+        emit sessionReady();
+    }
+
+    void logPrinted(){
+        //todo
+        emit sessionReady();
+    }
+
+    void cancelTransaction(){
+        paymentProcessor->cancelTransaction();
+        emit sessionReady();
+
+    }
+
+    void tryCoin(QString coin){
+        auto coinVal=identifyCoin(coin);
+        if(!coinVal)emit invalidCoinInserted();
+        else{
+            paymentProcessor->insertCoin(coinVal.value());
+        }
+    }
+
+    void tryAcceptPurchase(){
+        paymentProcessor->tryAcceptPurchase();
+    }
+
+    void startTransaction(){
+        paymentProcessor->startTransaction(currentTicket.price);
+    }
+
+    void ticketPicked(TicketData data){
+        currentTicket=data;
+        //todo check if ticket is still valid
+        emit ticketChoiceSuccesful(currentTicket);
+    }
+
+    void validateName(QString name){
+        if(verifyName(name)==false){
+            emit nameRejected();
+        }else{
+            emit nameAccepted(currentTicket);
+            
+        }
+    }
+
+signals:
+    void nameAccepted(TicketData);
+    void nameRejected();
+    void amountInsertedChanged(Cents,bool isEnough);
+    void sessionReady();
+    void invalidCoinInserted();
+    void purchaseCompleted();
+    void ticketChoiceSuccesful(TicketData);
+};
+
+class MainWindow:public QWidget{
     Q_OBJECT
 
     QVBoxLayout layout;
@@ -395,27 +475,73 @@ class MainWindowController:public QWidget{
     PaymentPage* paymentPage;
     PrintingPage* printingPage;
 
-    PaymentProcessor* paymentProcessor;
-
-    PlaceholderForLocalData localData;
-    Language language=Language::English;
-    std::vector<TicketData> availableTickets;
+    SessionController* session;
 
 
-    void completeLoginRetrieveData(const PlaceholderForLocalData& data){
-        localData=data;
-        availableTickets=retrieveTicketListFromServer();
-        goToMain();
+public:
+    MainWindow(QWidget* parent=nullptr):QWidget(parent),layout(this){
+        
+        session=new SessionController(this);
+
+        //stack.addWidget() passes ownership to the stack immidietly after the 'new'
+        loginPage=new LoginPage;
+        stack.addWidget(loginPage);
+        connect(loginPage,&LoginPage::loggedIntoDatabase,session,&SessionController::loginSucceded);
+        
+        connect(session,&SessionController::sessionReady,this,&MainWindow::goToMain);
+
+        mainPage=new MainPage;
+        stack.addWidget(mainPage);
+        connect(mainPage,&MainPage::languagesOption,this,&MainWindow::goToLanguages);
+        connect(mainPage,&MainPage::purchaseOption,this,&MainWindow::goToChooseTicketPage);
+        
+        languagesPage=new LanguagesPage;
+        stack.addWidget(languagesPage);
+        connect(languagesPage,&LanguagesPage::languagePicked,session,&SessionController::languageChanged);
+        connect(languagesPage,&LanguagesPage::backPressed,this,&MainWindow::goToMain);
+
+        printingPage=new PrintingPage;
+        stack.addWidget(printingPage);
+        connect(printingPage,&PrintingPage::printingFinished,session,&SessionController::logPrinted);
+
+        paymentPage=new PaymentPage();
+        stack.addWidget(paymentPage);
+        
+        connect(paymentPage,&PaymentPage::cancelPressed,session,&SessionController::cancelTransaction);
+        connect(paymentPage,&PaymentPage::denominationInserted,session,&SessionController::tryCoin);
+        
+        connect(session,&SessionController::invalidCoinInserted,paymentPage,&PaymentPage::unknownCoin);
+        
+        connect(paymentPage,&PaymentPage::confirmPressed,session,&SessionController::tryAcceptPurchase);
+        connect(paymentPage,&PaymentPage::transactionStarted,session,&SessionController::startTransaction);
+        connect(session,&SessionController::purchaseCompleted,this,&MainWindow::goToPrintingPage);
+        ///
+        
+        connect(session,&SessionController::amountInsertedChanged,paymentPage,&PaymentPage::amountInsertedChanged);
+        ///
+
+
+
+        inputPersonalDataPage=new InputPersonalDataPage();
+        stack.addWidget(inputPersonalDataPage);
+        connect(inputPersonalDataPage,&InputPersonalDataPage::cancelPressed,this,&MainWindow::goToMain);
+        connect(inputPersonalDataPage,&InputPersonalDataPage::personalDataSubmitted,session,&SessionController::validateName);
+        connect(session,&SessionController::nameRejected,inputPersonalDataPage,&InputPersonalDataPage::submittedNameNotAccepted);
+        connect(session,&SessionController::nameAccepted,this,&MainWindow::goToTakeCoinsPage);
+
+        chooseTicketPage=new ChooseTicketPage();
+        connect(chooseTicketPage,&ChooseTicketPage::backPressed,this,&MainWindow::goToMain);
+        connect(chooseTicketPage,&ChooseTicketPage::ticketPicked,session,&SessionController::ticketPicked);
+        connect(session,&SessionController::ticketChoiceSuccesful,this,&MainWindow::goToInputPersonalDataPage);
+
+        stack.addWidget(chooseTicketPage);
+
+        stack.setCurrentWidget(loginPage);
+        layout.addWidget(&stack);
     }
+public slots:
 
-    //placeholder, I will later connect it to the backend. Ultimately we want to be getting updates asynchronously.
-    std::vector<TicketData> retrieveTicketListFromServer(){
-        std::vector<TicketData> result;
-        result.push_back({"lorem",1});
-        result.push_back({"ipsum",2});
-        return result;
-    }
-
+    //conceptually we'll call reinitialize on all of them, while also passing the current language, but now it's not necessary.
     void goToMain(){
         stack.setCurrentWidget(mainPage);
     }
@@ -424,17 +550,12 @@ class MainWindowController:public QWidget{
         stack.setCurrentWidget(languagesPage);
     }
 
-    void receiveLanguageChange(Language lang){
-        language=lang;
-        goToMain();
-    }
-
-    void goToPrintingPage(const FullPurchaseData& data){
-        printingPage->startPrinting(data);
+    void goToPrintingPage(){
+        printingPage->startPrinting();
         stack.setCurrentWidget(printingPage);
     }
 
-    void goToTakeCoinsPage(const FullPurchaseData& data){
+    void goToTakeCoinsPage(const TicketData& data){
         paymentPage->reinitialize(data);
         stack.setCurrentWidget(paymentPage);
     }
@@ -444,66 +565,16 @@ class MainWindowController:public QWidget{
         stack.setCurrentWidget(inputPersonalDataPage);
     }
 
-    void generateAndGoToChooseTicketPage(){
-        chooseTicketPage->reinitialize(availableTickets);
+    void goToChooseTicketPage(){
+        chooseTicketPage->reinitialize(session->getAvailableTickets());
         stack.setCurrentWidget(chooseTicketPage);
     }
 
-public:
-    MainWindowController():layout(this){
-        
-        paymentProcessor= new PaymentProcessor(this);
-
-        //stack.addWidget() immidietly passes ownership to the stack
-        loginPage=new LoginPage;
-        stack.addWidget(loginPage);
-        connect(loginPage,&LoginPage::loggedIntoDatabase,this,&MainWindowController::completeLoginRetrieveData);
-        
-        mainPage=new MainPage;
-        stack.addWidget(mainPage);
-        connect(mainPage,&MainPage::languagesOption,this,&MainWindowController::goToLanguages);
-        connect(mainPage,&MainPage::purchaseOption,this,&MainWindowController::generateAndGoToChooseTicketPage);
-        
-        languagesPage=new LanguagesPage;
-        stack.addWidget(languagesPage);
-        connect(languagesPage,&LanguagesPage::languagePicked,this,&MainWindowController::receiveLanguageChange);
-
-        printingPage=new PrintingPage;
-        stack.addWidget(printingPage);
-        connect(printingPage,&PrintingPage::printingFinished,this,&MainWindowController::goToMain);
-
-        paymentPage=new PaymentPage();
-        stack.addWidget(paymentPage);
-        connect(paymentPage,&PaymentPage::cancelPressed,this,&MainWindowController::goToMain);
-        connect(paymentPage,&PaymentPage::paymentCompleted,this,&MainWindowController::goToPrintingPage);
-        
-        connect(paymentPage,&PaymentPage::cancelPressed,paymentProcessor,&PaymentProcessor::cancelTransaction);
-        connect(paymentPage,&PaymentPage::denominationInserted,paymentProcessor,&PaymentProcessor::tryCoin);
-        connect(paymentPage,&PaymentPage::confirmPressed,paymentProcessor,&PaymentProcessor::tryAcceptPurchase);
-        connect(paymentPage,&PaymentPage::transactionStarted,paymentProcessor,&PaymentProcessor::startTransaction);
-        connect(paymentProcessor,&PaymentProcessor::invalidCoinInserted,paymentPage,&PaymentPage::unknownCoin);
-        connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,paymentPage,&PaymentPage::purchaseSuccesful);
-        connect(paymentProcessor,&PaymentProcessor::amountInsertedChanged,paymentPage,&PaymentPage::amountInsertedChanged);
-
-
-        inputPersonalDataPage=new InputPersonalDataPage();
-        stack.addWidget(inputPersonalDataPage);
-        connect(inputPersonalDataPage,&InputPersonalDataPage::cancelPressed,this,&MainWindowController::goToMain);
-        connect(inputPersonalDataPage,&InputPersonalDataPage::personalDataConfirmed,this,&MainWindowController::goToTakeCoinsPage);
-
-        chooseTicketPage=new ChooseTicketPage();
-        connect(chooseTicketPage,&ChooseTicketPage::backPressed,this,&MainWindowController::goToMain);
-        connect(chooseTicketPage,&ChooseTicketPage::ticketPicked,this,&MainWindowController::goToInputPersonalDataPage);
-        stack.addWidget(chooseTicketPage);
-
-        stack.setCurrentWidget(loginPage);
-        layout.addWidget(&stack);
-    }
 };
 
 int main(int argc, char *argv[]){
     QApplication app(argc, argv);
-    MainWindowController window;
+    MainWindow window;
     window.show();
 
     return app.exec();
