@@ -128,8 +128,6 @@ class InputPersonalDataPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
 
-    TicketData ticketData;
-
     QLabel* title=new QLabel(this);
     QLineEdit* inputField=new QLineEdit(this) ;
     QLabel* errorMessage=new QLabel("The name can not be empty",this);
@@ -157,7 +155,6 @@ public:
     }
     void reinitialize(const TicketData& data){
         errorMessage->setVisible(false);
-        ticketData=data;
         title->setText("Input name associated with the ticket for "+ data.name);
     }
 signals:
@@ -179,16 +176,11 @@ class LoginPage: public QWidget{
     QPushButton* loginButton=new QPushButton("login",this);
 
     void loginClicked(){
-        //for now placeholder, later try to log into the local db and retrieve real data. /
-        //The DB is just local storage, but since this is just a simulation of a real machine, /
-        //there can be multiple machines with multiple DBs simulated on a single PC so we have to differentiate them
-        if(inputBox->text()=="temp"){
-            PlaceholderForLocalData temp=PlaceholderForLocalData{};
-            tryAgainMessage->setVisible(false);
-            emit loggedIntoDatabase(temp);
-        }else{
-            tryAgainMessage->setVisible(true);
-        }
+        inputBox->setDisabled(true);
+        loginButton->setDisabled(true);
+        QString dbId=inputBox->text();
+        inputBox->setText("");
+        emit dataBaseIDProvided(dbId);
     }
 
 public:
@@ -200,8 +192,14 @@ public:
         tryAgainMessage->setVisible(false);
         connect(loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
     }
+public slots:
+    void dbIdRejected(){
+        tryAgainMessage->setVisible(true);
+        inputBox->setDisabled(false);
+        loginButton->setDisabled(false);
+    }
 signals:
-    void loggedIntoDatabase(PlaceholderForLocalData);
+    void dataBaseIDProvided(QString);
 };
 
 class PaymentPage: public QWidget{
@@ -242,14 +240,12 @@ public:
         instruction->setText("insert "+centsToPriceString(data.price)+" in coins or bills");
         confirmButton->setDisabled(true);
         insertedMessage->setText("so far inserted $0.00");
-        emit transactionStarted();
     }
 signals:
     void cancelPressed();
 
     void denominationInserted(QString);
     void confirmPressed();
-    void transactionStarted();
 
 public slots:
     void amountInsertedChanged(Cents insertedAmount,bool isEnough){
@@ -373,7 +369,7 @@ Q_OBJECT
         return std::nullopt;
     }
 
-    //Ultimatly the possible input will be restricted by the keyboard in the machine so user won't be able to use any unicode shenanigans
+    //Ultimatly this will be a server call, so for now this is a bare-bones placeholder.
     bool verifyName(QString name){
         if(name.isEmpty())return false;
         return true;
@@ -397,11 +393,17 @@ public:
 
 public slots:
 
-    void loginSucceded(const PlaceholderForLocalData& data){
-        localData=data;
-        availableTickets=retrieveTicketListFromServer();
-        //todo: subsiribe to list updates from the server
-        emit sessionReady();
+    //for now placeholder, later try to log into the local db and retrieve real data. /
+    //The DB is just local storage, but since this is just a simulation of a real machine, /
+    //there can be multiple machines with multiple DBs simulated on a single PC so we have to differentiate them
+    void dbIdProvided(QString dbId){
+        if(dbId=="temp"){
+            localData = PlaceholderForLocalData{};
+            availableTickets=retrieveTicketListFromServer();
+            emit sessionReady();
+        }else{
+            emit unknownDBId();
+        }
     }
 
     void languageChanged(Language lang){
@@ -439,26 +441,26 @@ public slots:
     void ticketPicked(TicketData data){
         currentTicket=data;
         //todo check if ticket is still valid
-        emit ticketChoiceSuccesful(currentTicket);
+        emit ticketChoiceAccepted(currentTicket);
     }
 
-    void validateName(QString name){
+    void validateBuyerName(QString name){
         if(verifyName(name)==false){
             emit nameRejected();
         }else{
             emit nameAccepted(currentTicket);
-            
         }
     }
 
 signals:
+    void unknownDBId();
     void nameAccepted(TicketData);
     void nameRejected();
     void amountInsertedChanged(Cents,bool isEnough);
     void sessionReady();
     void invalidCoinInserted();
     void purchaseCompleted();
-    void ticketChoiceSuccesful(TicketData);
+    void ticketChoiceAccepted(TicketData);
 };
 
 class MainWindow:public QWidget{
@@ -482,59 +484,56 @@ public:
     MainWindow(QWidget* parent=nullptr):QWidget(parent),layout(this){
         
         session=new SessionController(this);
+        connect(session,&SessionController::sessionReady,this,&MainWindow::goToMain);
 
         //stack.addWidget() passes ownership to the stack immidietly after the 'new'
         loginPage=new LoginPage;
         stack.addWidget(loginPage);
-        connect(loginPage,&LoginPage::loggedIntoDatabase,session,&SessionController::loginSucceded);
-        
-        connect(session,&SessionController::sessionReady,this,&MainWindow::goToMain);
+        connect(loginPage,&LoginPage::dataBaseIDProvided,session,&SessionController::dbIdProvided);
+        connect(session,&SessionController::unknownDBId,loginPage,&LoginPage::dbIdRejected);
+
 
         mainPage=new MainPage;
         stack.addWidget(mainPage);
         connect(mainPage,&MainPage::languagesOption,this,&MainWindow::goToLanguages);
         connect(mainPage,&MainPage::purchaseOption,this,&MainWindow::goToChooseTicketPage);
         
+
         languagesPage=new LanguagesPage;
         stack.addWidget(languagesPage);
         connect(languagesPage,&LanguagesPage::languagePicked,session,&SessionController::languageChanged);
         connect(languagesPage,&LanguagesPage::backPressed,this,&MainWindow::goToMain);
 
-        printingPage=new PrintingPage;
-        stack.addWidget(printingPage);
-        connect(printingPage,&PrintingPage::printingFinished,session,&SessionController::logPrinted);
 
-        paymentPage=new PaymentPage();
-        stack.addWidget(paymentPage);
-        
-        connect(paymentPage,&PaymentPage::cancelPressed,session,&SessionController::cancelTransaction);
-        connect(paymentPage,&PaymentPage::denominationInserted,session,&SessionController::tryCoin);
-        
-        connect(session,&SessionController::invalidCoinInserted,paymentPage,&PaymentPage::unknownCoin);
-        
-        connect(paymentPage,&PaymentPage::confirmPressed,session,&SessionController::tryAcceptPurchase);
-        connect(paymentPage,&PaymentPage::transactionStarted,session,&SessionController::startTransaction);
-        connect(session,&SessionController::purchaseCompleted,this,&MainWindow::goToPrintingPage);
-        ///
-        
-        connect(session,&SessionController::amountInsertedChanged,paymentPage,&PaymentPage::amountInsertedChanged);
-        ///
-
+        chooseTicketPage=new ChooseTicketPage();
+        stack.addWidget(chooseTicketPage);
+        connect(chooseTicketPage,&ChooseTicketPage::backPressed,this,&MainWindow::goToMain);
+        connect(chooseTicketPage,&ChooseTicketPage::ticketPicked,session,&SessionController::ticketPicked);
+        connect(session,&SessionController::ticketChoiceAccepted,this,&MainWindow::goToInputPersonalDataPage);
 
 
         inputPersonalDataPage=new InputPersonalDataPage();
         stack.addWidget(inputPersonalDataPage);
         connect(inputPersonalDataPage,&InputPersonalDataPage::cancelPressed,this,&MainWindow::goToMain);
-        connect(inputPersonalDataPage,&InputPersonalDataPage::personalDataSubmitted,session,&SessionController::validateName);
+        connect(inputPersonalDataPage,&InputPersonalDataPage::personalDataSubmitted,session,&SessionController::validateBuyerName);
         connect(session,&SessionController::nameRejected,inputPersonalDataPage,&InputPersonalDataPage::submittedNameNotAccepted);
         connect(session,&SessionController::nameAccepted,this,&MainWindow::goToTakeCoinsPage);
 
-        chooseTicketPage=new ChooseTicketPage();
-        connect(chooseTicketPage,&ChooseTicketPage::backPressed,this,&MainWindow::goToMain);
-        connect(chooseTicketPage,&ChooseTicketPage::ticketPicked,session,&SessionController::ticketPicked);
-        connect(session,&SessionController::ticketChoiceSuccesful,this,&MainWindow::goToInputPersonalDataPage);
 
-        stack.addWidget(chooseTicketPage);
+        paymentPage=new PaymentPage();
+        stack.addWidget(paymentPage);
+        connect(paymentPage,&PaymentPage::cancelPressed,session,&SessionController::cancelTransaction);
+        connect(paymentPage,&PaymentPage::denominationInserted,session,&SessionController::tryCoin);
+        connect(paymentPage,&PaymentPage::confirmPressed,session,&SessionController::tryAcceptPurchase);
+        connect(session,&SessionController::invalidCoinInserted,paymentPage,&PaymentPage::unknownCoin);
+        connect(session,&SessionController::amountInsertedChanged,paymentPage,&PaymentPage::amountInsertedChanged);
+        connect(session,&SessionController::purchaseCompleted,this,&MainWindow::goToPrintingPage);
+
+
+        printingPage=new PrintingPage;
+        stack.addWidget(printingPage);
+        connect(printingPage,&PrintingPage::printingFinished,session,&SessionController::logPrinted);
+
 
         stack.setCurrentWidget(loginPage);
         layout.addWidget(&stack);
@@ -557,6 +556,7 @@ public slots:
 
     void goToTakeCoinsPage(const TicketData& data){
         paymentPage->reinitialize(data);
+        session->startTransaction();
         stack.setCurrentWidget(paymentPage);
     }
 
