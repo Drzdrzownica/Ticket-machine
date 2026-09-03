@@ -11,6 +11,17 @@
 #include <QTimer>
 #include <QObject>
 
+const std::vector<int> acceptedDenominationsCents{1,5,10,25,100,500,1000,2000};
+struct DenominationCounts{
+    int cents_1=0; // $0.01 etc... 
+    int cents_5=0;
+    int cents_10=0;
+    int cents_25=0;
+    int cents_100=0;// $1
+    int cents_500=0;
+    int cents_1000=0;
+    int cents_2000=0;
+};
 
 //this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
 using Cents = quint32;
@@ -20,11 +31,6 @@ QString centsToPriceString(Cents cents){
 //just to look pretty, I won't bother implementing languages, at least I don't think I will.
 enum class Language{
     English
-};
-
-//stuff like, what coins the machine contains (if it can output exact change), etc. This and all other structs below are essentially placeholders for now.
-struct PlaceholderForLocalData{
-    int dummyVal=0;
 };
 
 struct TicketData{
@@ -37,6 +43,8 @@ class MainPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
 
+    //goes without saying this is only for this version of the app
+    QPushButton* debugEditCoinsBtn =new QPushButton("DEBUG edit coins contents",this);
     //languages are a non-functional placeholde (since a page with a single option seems redundant,and I still want to have a main page)
     QPushButton* languagesBtn =new QPushButton("Languages",this);
     QPushButton* purchaseBtn = new QPushButton("Buy ticket",this);
@@ -44,19 +52,61 @@ class MainPage:public QWidget{
 
 public:
     MainPage():layout(this){
+        layout.addWidget(debugEditCoinsBtn);
         layout.addWidget(languagesBtn);
         layout.addWidget(purchaseBtn);
         layout.addWidget(exitBtn);
+        connect(debugEditCoinsBtn,&QPushButton::clicked,this,&MainPage::debugEditCoinsOption);
         connect(languagesBtn,&QPushButton::clicked,this,&MainPage::languagesOption);
         connect(purchaseBtn,&QPushButton::clicked,this,&MainPage::purchaseOption);
         //it's fine here to hard quit because in real hardware this button would not exist
         connect(exitBtn,&QPushButton::clicked,&QApplication::quit);
     }
 signals:
+    void debugEditCoinsOption();
     void languagesOption();
     void purchaseOption();
 };
 
+class DebugEditCoins:public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+
+    QPushButton* backButton=new QPushButton("Back",this);
+
+public:
+    DebugEditCoins():layout(this){
+        for(int denominationVal:acceptedDenominationsCents){
+            QHBoxLayout* rowLayout=new QHBoxLayout;
+            QString denominationStr=QString::number(denominationVal);
+            QLabel* denominationLabel=new QLabel(denominationStr);
+            QLineEdit* currentValue=new QLineEdit("0");
+            currentValue->setReadOnly(true);
+            currentValue->setFocusPolicy(Qt::NoFocus);
+            currentValue->setFixedWidth(50);
+            QPushButton* subBtn=new QPushButton("-");
+            subBtn->setFixedWidth(50);
+            QPushButton* addBtn=new QPushButton("+");
+            addBtn->setFixedWidth(50);
+
+            rowLayout->addWidget(denominationLabel);
+            rowLayout->addStretch();
+            rowLayout->addWidget(currentValue);
+            rowLayout->addWidget(subBtn);
+            rowLayout->addWidget(addBtn);
+
+            layout.addLayout(rowLayout);
+        }
+        connect(backButton,&QPushButton::clicked,this,&DebugEditCoins::backPressed);
+        layout.addWidget(backButton);
+    }
+
+
+signals:
+    void backPressed();
+    void coinAdded(QString);
+    void coinRemoved(QString);
+};
  
 class LanguagesPage:public QWidget{
     Q_OBJECT
@@ -206,7 +256,6 @@ class PaymentPage: public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
     
-
     QLabel* instruction=new QLabel("You are not supposed to see this message",this);
     QLineEdit* coinSlot=new QLineEdit(this);
     QPushButton* insertButton=new QPushButton("insert",this);
@@ -286,6 +335,7 @@ signals:
 
 class PaymentProcessor:public QObject{
 Q_OBJECT
+DenominationCounts localInventory;
 Cents amountCurrentlyInserted=0;
 Cents ticketCost=0;
 
@@ -297,6 +347,10 @@ std::optional<placeholderChangeType> canGiveOutChange(){
     return 0;
 }
 
+void loadLocalInventory(DenominationCounts inventory){
+    localInventory = inventory;
+}
+
 signals:
 
 void amountInsertedChanged(Cents newValue,bool isEnough);
@@ -304,7 +358,6 @@ void invalidCoinInserted();
 void purchaseCompleted();
 
 public slots:
-
     void insertCoin(Cents coinVal){
         amountCurrentlyInserted+=coinVal;
         if(coinVal!=0)emit amountInsertedChanged(amountCurrentlyInserted,amountCurrentlyInserted>=ticketCost); //there are no 0-cent coins so the check is unnecesary but it's there for compleatness
@@ -343,7 +396,6 @@ public slots:
 
 class SessionController:public QObject{
 Q_OBJECT
-    PlaceholderForLocalData localData;
     Language language=Language::English;    
     std::vector<TicketData> availableTickets;
     TicketData currentTicket;
@@ -375,6 +427,14 @@ Q_OBJECT
         return true;
     }
 
+    //placeholder
+    DenominationCounts getLocalCoinInventory(QString dbId){
+        DenominationCounts result;
+        result.cents_100=2;
+        result.cents_5=1;
+        return result;
+    }
+
 public:
 
     const std::vector<TicketData>& getAvailableTickets() const {
@@ -398,7 +458,7 @@ public slots:
     //there can be multiple machines with multiple DBs simulated on a single PC so we have to differentiate them
     void dbIdProvided(QString dbId){
         if(dbId=="temp"){
-            localData = PlaceholderForLocalData{};
+            paymentProcessor->loadLocalInventory(getLocalCoinInventory(dbId));
             availableTickets=retrieveTicketListFromServer();
             emit sessionReady();
         }else{
@@ -469,8 +529,9 @@ class MainWindow:public QWidget{
     QVBoxLayout layout;
     QStackedWidget stack;
 
-    MainPage* mainPage;
     LoginPage* loginPage;
+    MainPage* mainPage;
+    DebugEditCoins* debugEditCoins;
     LanguagesPage* languagesPage;
     ChooseTicketPage* chooseTicketPage;
     InputPersonalDataPage* inputPersonalDataPage;
@@ -497,7 +558,13 @@ public:
         stack.addWidget(mainPage);
         connect(mainPage,&MainPage::languagesOption,this,&MainWindow::goToLanguages);
         connect(mainPage,&MainPage::purchaseOption,this,&MainWindow::goToChooseTicketPage);
+
         
+        debugEditCoins=new DebugEditCoins;
+        stack.addWidget(debugEditCoins);
+        connect(mainPage,&MainPage::debugEditCoinsOption,this,&MainWindow::goToDebugEditCoins);
+        connect(debugEditCoins,&DebugEditCoins::backPressed,this,&MainWindow::goToMain);
+
 
         languagesPage=new LanguagesPage;
         stack.addWidget(languagesPage);
@@ -543,6 +610,10 @@ public slots:
     //conceptually we'll call reinitialize on all of them, while also passing the current language, but now it's not necessary.
     void goToMain(){
         stack.setCurrentWidget(mainPage);
+    }
+
+    void goToDebugEditCoins(){
+        stack.setCurrentWidget(debugEditCoins);
     }
 
     void goToLanguages(){
