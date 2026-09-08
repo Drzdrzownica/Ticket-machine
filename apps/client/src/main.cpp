@@ -11,20 +11,82 @@
 #include <QTimer>
 #include <QObject>
 
-const std::vector<int> acceptedDenominationsCents{1,5,10,25,100,500,1000,2000};
-struct DenominationCounts{
-    int cents_1=0; // $0.01 etc... 
-    int cents_5=0;
-    int cents_10=0;
-    int cents_25=0;
-    int cents_100=0;// $1
-    int cents_500=0;
-    int cents_1000=0;
-    int cents_2000=0;
+using Cents = quint64;
+
+struct CoinInventory{
+    static constexpr std::array<Cents,8> acceptedDenominationsCents{1,5,10,25,100,500,1000,2000};
+    static bool isValidDenomination(Cents value){
+        return std::find(acceptedDenominationsCents.begin(),acceptedDenominationsCents.end(),value)!=acceptedDenominationsCents.end();
+    }
+    static bool isValidDenomination(const QString& str){
+        bool isNum;
+        quint64 value=str.toULongLong(&isNum);
+        if(!isNum)return false;
+        return isValidDenomination(value);
+    }
+private:
+    std::array<quint64,acceptedDenominationsCents.size()> inventory{};
+    quint64& amountOf(Cents value){
+        //the competetive programmer living in my heart screams at me to optimize those O(n) look-ups, but it's really unnecessary here.
+        auto iterator=std::find(acceptedDenominationsCents.begin(),acceptedDenominationsCents.end(),value);
+        Q_ASSERT(iterator!=acceptedDenominationsCents.end());
+        return inventory[std::distance(acceptedDenominationsCents.begin(),iterator)];
+    }
+public:
+    void addCoin(Cents value,quint64 amount=1){
+        amountOf(value)+=amount;
+    }
+    void subtractCoin(Cents value,quint64 amount=1){
+        Q_ASSERT(amountOf(value)>=amount);
+        amountOf(value)-=amount;
+    }
+
+    std::vector<std::pair<Cents,quint64>> getInventoryList()const{
+        std::vector<std::pair<Cents,quint64>>result;
+        for(std::size_t i=0;i<inventory.size();i++){
+            result.push_back({acceptedDenominationsCents[i],inventory[i]});
+        }
+        return result;
+    }
+    //we explicitly don't worry about overflow here. There is litterally not enough money in the world
+    Cents getTotalAmount() const{
+        Cents result=0;
+        for(std::size_t i=0;i<inventory.size();i++){
+            result+=inventory[i]*acceptedDenominationsCents[i];
+        }
+        return result;
+    }
+
+    auto operator<=>(const CoinInventory&)const=default;
+    void moveInventoryFrom(CoinInventory& other){
+        Q_ASSERT(this!=&other);
+        for(std::size_t i=0;i<inventory.size();i++){
+            inventory[i]+=other.inventory[i];
+            other.inventory[i]=0;
+        }
+    }
+    void subtractInventory(const CoinInventory& other){
+        for(std::size_t i=0;i<inventory.size();i++){
+            Q_ASSERT(inventory[i]>=other.inventory[i]);
+            inventory[i]-=other.inventory[i];
+        }
+    }
+    void addInventory(const CoinInventory& other){
+        for(std::size_t i=0;i<inventory.size();i++){
+            inventory[i]+=other.inventory[i];
+        }
+    }
+
+    friend CoinInventory operator+(const CoinInventory& a,const CoinInventory& b){
+        CoinInventory result{};
+        result.addInventory(a);
+        result.addInventory(b);
+        return result;
+    }
+
 };
 
 //this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
-using Cents = quint32;
 QString centsToPriceString(Cents cents){
     return QString("$%1.%2").arg(cents/100).arg(cents%100,2,10,QChar('0'));
 }
@@ -38,6 +100,41 @@ struct TicketData{
     Cents price;
 };
 
+
+class LoginPage: public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+    QLabel* instruction=new QLabel("Enter The DB id",this);
+    QLineEdit* inputBox=new QLineEdit(this);
+    QLabel* tryAgainMessage=new QLabel("No DB with given ID. Try again",this);
+    QPushButton* loginButton=new QPushButton("login",this);
+
+    void loginClicked(){
+        inputBox->setDisabled(true);
+        loginButton->setDisabled(true);
+        QString dbId=inputBox->text();
+        inputBox->setText("");
+        emit dataBaseIDProvided(dbId);
+    }
+
+public:
+    LoginPage():layout(this){
+        layout.addWidget(instruction);
+        layout.addWidget(inputBox);
+        layout.addWidget(tryAgainMessage);
+        layout.addWidget(loginButton);
+        tryAgainMessage->setVisible(false);
+        connect(loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
+    }
+public slots:
+    void dbIdRejected(){
+        tryAgainMessage->setVisible(true);
+        inputBox->setDisabled(false);
+        loginButton->setDisabled(false);
+    }
+signals:
+    void dataBaseIDProvided(QString);
+};
 
 class MainPage:public QWidget{
     Q_OBJECT
@@ -73,10 +170,11 @@ class DebugEditCoins:public QWidget{
     QVBoxLayout layout;
 
     QPushButton* backButton=new QPushButton("Back",this);
-
+    QHash<int,QLineEdit*> denomination_AmountDisplay;
+    QHash<int,QPushButton*> denomination_SubtractButton;
 public:
     DebugEditCoins():layout(this){
-        for(int denominationVal:acceptedDenominationsCents){
+        for(Cents denominationVal:CoinInventory::acceptedDenominationsCents){
             QHBoxLayout* rowLayout=new QHBoxLayout;
             QString denominationStr=QString::number(denominationVal);
             QLabel* denominationLabel=new QLabel(denominationStr);
@@ -89,6 +187,13 @@ public:
             QPushButton* addBtn=new QPushButton("+");
             addBtn->setFixedWidth(50);
 
+            connect(subBtn,&QPushButton::clicked,this,[this,denominationVal](){emit DEBUGcoinRemoved(denominationVal);});
+            connect(addBtn,&QPushButton::clicked,this,[this,denominationVal](){emit DEBUGcoinAdded(denominationVal);});
+
+            denomination_AmountDisplay[denominationVal]=currentValue;
+            denomination_SubtractButton[denominationVal]=subBtn;
+            subBtn->setDisabled(true);
+
             rowLayout->addWidget(denominationLabel);
             rowLayout->addStretch();
             rowLayout->addWidget(currentValue);
@@ -100,12 +205,20 @@ public:
         connect(backButton,&QPushButton::clicked,this,&DebugEditCoins::backPressed);
         layout.addWidget(backButton);
     }
-
-
+public slots:
+    void setAmountValues(CoinInventory inventory){
+        for(const auto& [denomination,amount]:inventory.getInventoryList()){
+            denomination_AmountDisplay[denomination]->setText(QString::number(amount));
+            QPushButton* subBtn=denomination_SubtractButton[denomination];
+            if(amount==0)subBtn->setDisabled(true);
+            else subBtn->setDisabled(false);
+        }
+    }
 signals:
     void backPressed();
-    void coinAdded(QString);
-    void coinRemoved(QString);
+    void DEBUGcoinAdded(Cents denomination);
+    void DEBUGcoinRemoved(Cents denomination);
+    
 };
  
 class LanguagesPage:public QWidget{
@@ -217,41 +330,6 @@ public slots:
     }
 };
 
-class LoginPage: public QWidget{
-    Q_OBJECT
-    QVBoxLayout layout;
-    QLabel* instruction=new QLabel("Enter The DB id",this);
-    QLineEdit* inputBox=new QLineEdit(this);
-    QLabel* tryAgainMessage=new QLabel("No DB with given ID. Try again",this);
-    QPushButton* loginButton=new QPushButton("login",this);
-
-    void loginClicked(){
-        inputBox->setDisabled(true);
-        loginButton->setDisabled(true);
-        QString dbId=inputBox->text();
-        inputBox->setText("");
-        emit dataBaseIDProvided(dbId);
-    }
-
-public:
-    LoginPage():layout(this){
-        layout.addWidget(instruction);
-        layout.addWidget(inputBox);
-        layout.addWidget(tryAgainMessage);
-        layout.addWidget(loginButton);
-        tryAgainMessage->setVisible(false);
-        connect(loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
-    }
-public slots:
-    void dbIdRejected(){
-        tryAgainMessage->setVisible(true);
-        inputBox->setDisabled(false);
-        loginButton->setDisabled(false);
-    }
-signals:
-    void dataBaseIDProvided(QString);
-};
-
 class PaymentPage: public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
@@ -308,6 +386,24 @@ public slots:
 
 };
 
+class ReturningMoneyPage:public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+
+    QLabel* couldNotProduceChangeMessage=new QLabel("Sorry, the machine could not produce exact change");
+    QLabel* pleaseWaitMessage=new QLabel("Returning inserted coins. Please wait.");
+public:
+
+    ReturningMoneyPage():layout(this){
+        layout.addWidget(couldNotProduceChangeMessage);
+        layout.addWidget(pleaseWaitMessage);
+    }
+    void reinitialize(bool couldNotGiveChange){
+        if(couldNotGiveChange)couldNotProduceChangeMessage->setVisible(true);
+        else couldNotProduceChangeMessage->setVisible(false);
+    }
+};
+
 class PrintingPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
@@ -318,7 +414,7 @@ public:
         layout.addWidget(message);
     }
 
-    //This is obviously an abstraction of a physical process. Real implementation wouldn't need timers. But it will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
+    //This is obviously an abstraction of a physical process. Real implementation will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
     void startPrinting(){
         message->setText("Printing in progress...");
         QTimer::singleShot(3000, this, [this] {
@@ -335,62 +431,98 @@ signals:
 
 class PaymentProcessor:public QObject{
 Q_OBJECT
-DenominationCounts localInventory;
-Cents amountCurrentlyInserted=0;
+CoinInventory localInventory{};
+
+CoinInventory transactionInventory{};
+
 Cents ticketCost=0;
+
+private:
+
+void outputCoins(CoinInventory coins){
+    for(const auto& [denomination,amount]:coins.getInventoryList()){
+        qInfo()<<amount<<" coins of denomination "<<denomination<<" returned";    
+    }
+}
 
 public:
 PaymentProcessor(QObject* parent=nullptr):QObject(parent){}
 
-using placeholderChangeType = int;//will make it a real one later
-std::optional<placeholderChangeType> canGiveOutChange(){
-    return 0;
+//as a placeholder for now we assume we can't give out change, unless there is no need to return any. 
+std::optional<CoinInventory> canGiveOutChange(){
+    if(transactionInventory.getTotalAmount()==ticketCost)return CoinInventory{};
+
+    CoinInventory fullInventory=localInventory+transactionInventory;
+    //todo
+    return {};
 }
 
-void loadLocalInventory(DenominationCounts inventory){
-    localInventory = inventory;
+void loadLocalInventory(CoinInventory inventory){
+    if(inventory!=localInventory){
+        localInventory = inventory;
+        emit localInventoryChanged(localInventory);
+    }
 }
 
 signals:
 
+void localInventoryChanged(CoinInventory);
 void amountInsertedChanged(Cents newValue,bool isEnough);
 void invalidCoinInserted();
 void purchaseCompleted();
+void returningCoins(bool couldNotGiveOutExactChange);
+void coinsReturned();
 
 public slots:
+    void DEBUGCoinAdded(Cents cents){
+        localInventory.addCoin(cents);
+        emit localInventoryChanged(localInventory);
+    }
+
+    void DEBUGCoinRemoved(Cents cents){
+        localInventory.subtractCoin(cents);
+        emit localInventoryChanged(localInventory);
+    }
+
     void insertCoin(Cents coinVal){
-        amountCurrentlyInserted+=coinVal;
-        if(coinVal!=0)emit amountInsertedChanged(amountCurrentlyInserted,amountCurrentlyInserted>=ticketCost); //there are no 0-cent coins so the check is unnecesary but it's there for compleatness
+        transactionInventory.addCoin(coinVal);
+        emit amountInsertedChanged(transactionInventory.getTotalAmount(),transactionInventory.getTotalAmount()>=ticketCost);
     }
 
     //placeholder. For now accept blindly
     void tryAcceptPurchase(){
-        //if can give out change
-
-        if(amountCurrentlyInserted<ticketCost){
-            //emit ...
+        Cents sumInserted=transactionInventory.getTotalAmount();
+        if(sumInserted<ticketCost){
+            //todo emit ... (this is an error state) temporary fix:
+            cancelTransaction(true);
         }else{
             auto change=canGiveOutChange();
             if(!change){
-                //emit ...
+                cancelTransaction(true);
             }else{
-                //give out change
-                amountCurrentlyInserted=0;
+                localInventory.moveInventoryFrom(transactionInventory); 
+                outputCoins(change.value());
+                localInventory.subtractInventory(change.value());
+
+                if(sumInserted!=0)emit localInventoryChanged(localInventory);
                 emit purchaseCompleted();
             }
         }
     }
 
-    void cancelTransaction(){
-        //return coins
-        amountCurrentlyInserted=0;
-
+    void cancelTransaction(bool couldNotGiveOutExactChange = false){
+        emit returningCoins(couldNotGiveOutExactChange);
+        outputCoins(transactionInventory);
+        transactionInventory={};
+        //abstraction, it would take time for real machine to spit out all the inserted coins back
+        QTimer::singleShot(2000, this, [this] {
+            emit coinsReturned();
+        });
     }
 
     void startTransaction(Cents cost){
-        if(amountCurrentlyInserted!=0);//hande error. todo
-        amountCurrentlyInserted=0;
-        ticketCost=cost;
+        if(transactionInventory.getTotalAmount()!=0)qFatal("Multiple transactions at the same time");//A little hard-handed. Just a temporary solution
+        else ticketCost=cost;
     }
 };
 
@@ -409,18 +541,6 @@ Q_OBJECT
         return result;
     }
 
-    std::optional<Cents> identifyCoin(const QString& coin){
-        if(coin=="1")return 1;
-        if(coin=="5")return 5;
-        if(coin=="10")return 10;
-        if(coin=="25")return 25;
-        if(coin=="100")return 100;
-        if(coin=="500")return 500;
-        if(coin=="1000")return 1000;
-        if(coin=="2000")return 2000;
-        return std::nullopt;
-    }
-
     //Ultimatly this will be a server call, so for now this is a bare-bones placeholder.
     bool verifyName(QString name){
         if(name.isEmpty())return false;
@@ -428,10 +548,10 @@ Q_OBJECT
     }
 
     //placeholder
-    DenominationCounts getLocalCoinInventory(QString dbId){
-        DenominationCounts result;
-        result.cents_100=2;
-        result.cents_5=1;
+    CoinInventory getLocalCoinInventory(QString dbId){
+        CoinInventory result;
+        result.addCoin(5);    //$0.05 
+        result.addCoin(100,2);  //$1 * 2
         return result;
     }
 
@@ -449,9 +569,20 @@ public:
         paymentProcessor= new PaymentProcessor(this);
         connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,this,&SessionController::purchaseCompleted);
         connect(paymentProcessor,&PaymentProcessor::amountInsertedChanged,this,&SessionController::amountInsertedChanged);
+        connect(paymentProcessor,&PaymentProcessor::localInventoryChanged,this,&SessionController::localInventoryChanged);
+        connect(paymentProcessor,&PaymentProcessor::returningCoins,this,&SessionController::returningCoins);
+        connect(paymentProcessor,&PaymentProcessor::coinsReturned,this,&SessionController::coinsReturned);
     }
 
 public slots:
+    
+    void DEBUGCoinAdded(Cents coin){
+        paymentProcessor->DEBUGCoinAdded(coin);
+    }
+
+    void DEBUGCoinRemoved(Cents coin){
+        paymentProcessor->DEBUGCoinRemoved(coin);
+    }
 
     //for now placeholder, later try to log into the local db and retrieve real data. /
     //The DB is just local storage, but since this is just a simulation of a real machine, /
@@ -478,15 +609,12 @@ public slots:
 
     void cancelTransaction(){
         paymentProcessor->cancelTransaction();
-        emit sessionReady();
-
     }
 
     void tryCoin(QString coin){
-        auto coinVal=identifyCoin(coin);
-        if(!coinVal)emit invalidCoinInserted();
+        if(CoinInventory::isValidDenomination(coin)==false)emit invalidCoinInserted();
         else{
-            paymentProcessor->insertCoin(coinVal.value());
+            paymentProcessor->insertCoin(coin.toUInt());
         }
     }
 
@@ -513,6 +641,7 @@ public slots:
     }
 
 signals:
+    void localInventoryChanged(CoinInventory);
     void unknownDBId();
     void nameAccepted(TicketData);
     void nameRejected();
@@ -521,6 +650,9 @@ signals:
     void invalidCoinInserted();
     void purchaseCompleted();
     void ticketChoiceAccepted(TicketData);
+    void returningCoins(bool couldNotGiveOutExactChange);
+    void coinsReturned();
+
 };
 
 class MainWindow:public QWidget{
@@ -536,6 +668,7 @@ class MainWindow:public QWidget{
     ChooseTicketPage* chooseTicketPage;
     InputPersonalDataPage* inputPersonalDataPage;
     PaymentPage* paymentPage;
+    ReturningMoneyPage* returningMoneyPage;
     PrintingPage* printingPage;
 
     SessionController* session;
@@ -564,6 +697,9 @@ public:
         stack.addWidget(debugEditCoins);
         connect(mainPage,&MainPage::debugEditCoinsOption,this,&MainWindow::goToDebugEditCoins);
         connect(debugEditCoins,&DebugEditCoins::backPressed,this,&MainWindow::goToMain);
+        connect(debugEditCoins,&DebugEditCoins::DEBUGcoinAdded,session,&SessionController::DEBUGCoinAdded);
+        connect(debugEditCoins,&DebugEditCoins::DEBUGcoinRemoved,session,&SessionController::DEBUGCoinRemoved);
+        connect(session,&SessionController::localInventoryChanged,debugEditCoins,&DebugEditCoins::setAmountValues);
 
 
         languagesPage=new LanguagesPage;
@@ -597,6 +733,11 @@ public:
         connect(session,&SessionController::purchaseCompleted,this,&MainWindow::goToPrintingPage);
 
 
+        returningMoneyPage=new ReturningMoneyPage();
+        stack.addWidget(returningMoneyPage);
+        connect(session,&SessionController::returningCoins,this,&MainWindow::goToReturningMoneyPage);
+        connect(session,&SessionController::coinsReturned,this,&MainWindow::goToMain);
+
         printingPage=new PrintingPage;
         stack.addWidget(printingPage);
         connect(printingPage,&PrintingPage::printingFinished,session,&SessionController::logPrinted);
@@ -610,6 +751,11 @@ public slots:
     //conceptually we'll call reinitialize on all of them, while also passing the current language, but now it's not necessary.
     void goToMain(){
         stack.setCurrentWidget(mainPage);
+    }
+
+    void goToReturningMoneyPage(bool couldNotGiveOutChange=false){
+        returningMoneyPage->reinitialize(couldNotGiveOutChange);
+        stack.setCurrentWidget(returningMoneyPage);
     }
 
     void goToDebugEditCoins(){
