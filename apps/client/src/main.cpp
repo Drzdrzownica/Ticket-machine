@@ -15,6 +15,9 @@ using Cents = quint64;
 
 struct CoinInventory{
     static constexpr std::array<Cents,8> acceptedDenominationsCents{1,5,10,25,100,500,1000,2000};
+    static_assert(std::ranges::is_sorted(acceptedDenominationsCents));
+    static_assert(std::ranges::adjacent_find(acceptedDenominationsCents) == acceptedDenominationsCents.end());
+    static_assert(acceptedDenominationsCents[0]>0);
     static bool isValidDenomination(Cents value){
         return std::find(acceptedDenominationsCents.begin(),acceptedDenominationsCents.end(),value)!=acceptedDenominationsCents.end();
     }
@@ -33,10 +36,13 @@ private:
         return inventory[std::distance(acceptedDenominationsCents.begin(),iterator)];
     }
 public:
+
     void addCoin(Cents value,quint64 amount=1){
+        Q_ASSERT(isValidDenomination(value));
         amountOf(value)+=amount;
     }
     void subtractCoin(Cents value,quint64 amount=1){
+        Q_ASSERT(isValidDenomination(value));
         Q_ASSERT(amountOf(value)>=amount);
         amountOf(value)-=amount;
     }
@@ -54,6 +60,12 @@ public:
         for(std::size_t i=0;i<inventory.size();i++){
             result+=inventory[i]*acceptedDenominationsCents[i];
         }
+        return result;
+    }
+    
+    quint64 getAmountOfCoins() const{
+        quint64 result=0;
+        for(quint64 amount:inventory)result+=amount;
         return result;
     }
 
@@ -84,6 +96,32 @@ public:
         return result;
     }
 
+    std::optional<CoinInventory> coinChange(Cents change) const{
+        static constexpr Cents maximumChange=50000; //500$ protection agains abuse, since dp can theoreticaly consume a lot of time and memory. If someone inserts that much money, he's not serious. We can safely reject it.
+        static constexpr Cents maximumOfCoinType=100; //protection against expensive calculations, and we don't want to flood user with too many coins anyway.
+        if(change==0)return CoinInventory{};
+        if(change>maximumChange)return {}; 
+        CoinInventory boundedInventory=*this;
+        for(auto& count:boundedInventory.inventory)count=std::min(count,maximumOfCoinType); 
+
+        std::vector<std::optional<CoinInventory>> oldDp(change+1);
+        std::vector<std::optional<CoinInventory>> dp(change+1);
+        dp[0]=CoinInventory{};
+        for(int coinIndex=acceptedDenominationsCents.size()-1;coinIndex>=0;coinIndex--){
+            oldDp=dp;
+            for(quint64 coinAmount=1;coinAmount<=boundedInventory.inventory[coinIndex];coinAmount++){
+                quint64 groupValue=coinAmount*acceptedDenominationsCents[coinIndex];
+                for(size_t i=groupValue;i<dp.size();i++){
+                    if(!oldDp[i-groupValue])continue;
+                    if(!dp[i] or (dp[i].value().getAmountOfCoins()>oldDp[i-groupValue].value().getAmountOfCoins()+coinAmount)){
+                        dp[i]=oldDp[i-groupValue];
+                        dp[i].value().inventory[coinIndex]+=coinAmount;
+                    }
+                }
+            }
+        }
+        return dp[change];
+    }
 };
 
 //this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
@@ -170,8 +208,8 @@ class DebugEditCoins:public QWidget{
     QVBoxLayout layout;
 
     QPushButton* backButton=new QPushButton("Back",this);
-    QHash<int,QLineEdit*> denomination_AmountDisplay;
-    QHash<int,QPushButton*> denomination_SubtractButton;
+    QHash<Cents,QLineEdit*> denomination_AmountDisplay;
+    QHash<Cents,QPushButton*> denomination_SubtractButton;
 public:
     DebugEditCoins():layout(this){
         for(Cents denominationVal:CoinInventory::acceptedDenominationsCents){
@@ -448,15 +486,6 @@ void outputCoins(CoinInventory coins){
 public:
 PaymentProcessor(QObject* parent=nullptr):QObject(parent){}
 
-//as a placeholder for now we assume we can't give out change, unless there is no need to return any. 
-std::optional<CoinInventory> canGiveOutChange(){
-    if(transactionInventory.getTotalAmount()==ticketCost)return CoinInventory{};
-
-    CoinInventory fullInventory=localInventory+transactionInventory;
-    //todo
-    return {};
-}
-
 void loadLocalInventory(CoinInventory inventory){
     if(inventory!=localInventory){
         localInventory = inventory;
@@ -489,16 +518,17 @@ public slots:
         emit amountInsertedChanged(transactionInventory.getTotalAmount(),transactionInventory.getTotalAmount()>=ticketCost);
     }
 
-    //placeholder. For now accept blindly
     void tryAcceptPurchase(){
         Cents sumInserted=transactionInventory.getTotalAmount();
         if(sumInserted<ticketCost){
-            //todo emit ... (this is an error state) temporary fix:
             cancelTransaction(true);
         }else{
-            auto change=canGiveOutChange();
+            Cents changeValue=sumInserted-ticketCost;
+            CoinInventory fullInventory=localInventory+transactionInventory;
+            auto change=fullInventory.coinChange(changeValue);
             if(!change){
-                cancelTransaction(true);
+                qWarning("Attempted purchase finalization with insufficient money");
+                cancelTransaction(false);
             }else{
                 localInventory.moveInventoryFrom(transactionInventory); 
                 outputCoins(change.value());
@@ -550,8 +580,9 @@ Q_OBJECT
     //placeholder
     CoinInventory getLocalCoinInventory(QString dbId){
         CoinInventory result;
-        result.addCoin(5);    //$0.05 
-        result.addCoin(100,2);  //$1 * 2
+        result.addCoin(1,10);    //$0.01 *10
+        result.addCoin(5,2);
+        result.addCoin(100);  //$1 * 1
         return result;
     }
 
@@ -614,7 +645,7 @@ public slots:
     void tryCoin(QString coin){
         if(CoinInventory::isValidDenomination(coin)==false)emit invalidCoinInserted();
         else{
-            paymentProcessor->insertCoin(coin.toUInt());
+            paymentProcessor->insertCoin(coin.toULongLong());
         }
     }
 
@@ -628,7 +659,7 @@ public slots:
 
     void ticketPicked(TicketData data){
         currentTicket=data;
-        //todo check if ticket is still valid
+        //todo check with server if ticket is still valid
         emit ticketChoiceAccepted(currentTicket);
     }
 
