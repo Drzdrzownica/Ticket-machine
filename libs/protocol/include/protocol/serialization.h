@@ -25,5 +25,8 @@ namespace parsing{
 
     //Does not guarantee that unpacked message will be valid
     ClientMessage unpackClientMessage(const QByteArray& data);
+    ServerResponse unpackServerResponse(const QByteArray& data);
+
+    
 }
 #endif

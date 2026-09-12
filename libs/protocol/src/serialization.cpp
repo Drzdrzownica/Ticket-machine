@@ -25,3 +25,12 @@ ClientMessage parsing::unpackClientMessage(const QByteArray& data){
         data.mid(2)
     };
 }
+
+ServerResponse parsing::unpackServerResponse(const QByteArray& data){
+    if(data.size()<4)throw std::invalid_argument("Not_enough_bytes");
+    return{
+        static_cast<ServerMessageType>(parsing::unpackNumber<quint16>(data)),
+        static_cast<ClientMessageType>(parsing::unpackNumber<quint16>(data.mid(2))),
+        data.mid(4)
+    };
+}

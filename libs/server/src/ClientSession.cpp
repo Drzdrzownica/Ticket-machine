@@ -139,6 +139,12 @@ void ClientSession::onReadyRead() {
             response = craftResponse(request);
         }
 
+        //debug temporary!!!
+
+        qInfo()<<id<<" :: "<< quint64(request.type)<<":"<<request.message<<"|"<<Qt::hex<<quint64(response.type)<<":"<<response.message;
+
+        //\debug
+
         if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientCrit)){
             fail(response,request);
             return;

@@ -17,11 +17,15 @@ add_executable(serverProgram
     ./libs/server/src/TicketStore.cpp
     ./libs/server/src/ClientSession.cpp
     ./apps/server/src/main.cpp
+    )
+add_executable(myprogram 
+    ./libs/protocol/src/serialization.cpp
+    ./apps/client/src/main.cpp
 )
-add_executable(myprogram ./apps/client/src/main.cpp)
 
 target_include_directories(serverProgram PRIVATE ${CMAKE_SOURCE_DIR}/libs/server/include)
 target_include_directories(serverProgram PRIVATE ${CMAKE_SOURCE_DIR}/libs/protocol/include)
+target_include_directories(myprogram PRIVATE ${CMAKE_SOURCE_DIR}/libs/protocol/include)
 
 target_link_libraries(myprogram Qt6::Network Qt6::Widgets)
 target_link_libraries(serverProgram Qt6::Network)

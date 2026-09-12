@@ -112,4 +112,11 @@ struct ClientMessage{
     ClientMessageType type;
     QByteArray message="";//optional
 };
+
+struct ServerResponse{
+    ServerMessageType type;
+    ClientMessageType inResponseTo;
+    QByteArray message="";
+    bool operator==(const ServerResponse&)const=default;
+};
 #endif

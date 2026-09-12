@@ -7,10 +7,13 @@
 #include <QLayout>
 #include <QPushButton>
 #include <QLineEdit>
-#include <iostream>
 #include <QTimer>
 #include <QObject>
+#include <QTcpSocket>
 
+#include "protocol/serialization.h"
+
+QByteArray clientVersion = "0.0.0.1";
 using Cents = quint64;
 
 struct CoinInventory{
@@ -98,11 +101,11 @@ public:
 
     std::optional<CoinInventory> coinChange(Cents change) const{
         static constexpr Cents maximumChange=50000; //500$ protection agains abuse, since dp can theoreticaly consume a lot of time and memory. If someone inserts that much money, he's not serious. We can safely reject it.
-        static constexpr Cents maximumOfCoinType=100; //protection against expensive calculations, and we don't want to flood user with too many coins anyway.
+        static constexpr Cents maximumCoinsDispensed=100; //protection against expensive calculations, and we don't want to flood user with too many coins anyway.
         if(change==0)return CoinInventory{};
         if(change>maximumChange)return {}; 
         CoinInventory boundedInventory=*this;
-        for(auto& count:boundedInventory.inventory)count=std::min(count,maximumOfCoinType); 
+        for(auto& count:boundedInventory.inventory)count=std::min(count,maximumCoinsDispensed); 
 
         std::vector<std::optional<CoinInventory>> oldDp(change+1);
         std::vector<std::optional<CoinInventory>> dp(change+1);
@@ -112,10 +115,13 @@ public:
             for(quint64 coinAmount=1;coinAmount<=boundedInventory.inventory[coinIndex];coinAmount++){
                 quint64 groupValue=coinAmount*acceptedDenominationsCents[coinIndex];
                 for(size_t i=groupValue;i<dp.size();i++){
-                    if(!oldDp[i-groupValue])continue;
-                    if(!dp[i] or (dp[i].value().getAmountOfCoins()>oldDp[i-groupValue].value().getAmountOfCoins()+coinAmount)){
-                        dp[i]=oldDp[i-groupValue];
-                        dp[i].value().inventory[coinIndex]+=coinAmount;
+                    auto& previous = oldDp[i - groupValue];
+                    if(!previous)continue;
+                    const quint64 potentialCoinCount=previous->getAmountOfCoins() + coinAmount;
+                    if(potentialCoinCount>maximumCoinsDispensed)continue;
+                    if(!dp[i] or (dp[i]->getAmountOfCoins()>potentialCoinCount)){
+                        dp[i]=previous;
+                        dp[i]->inventory[coinIndex]+=coinAmount;
                     }
                 }
             }
@@ -161,6 +167,7 @@ public:
         layout.addWidget(inputBox);
         layout.addWidget(tryAgainMessage);
         layout.addWidget(loginButton);
+        loginButton->setDisabled(true);
         tryAgainMessage->setVisible(false);
         connect(loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
     }
@@ -168,6 +175,9 @@ public slots:
     void dbIdRejected(){
         tryAgainMessage->setVisible(true);
         inputBox->setDisabled(false);
+        loginButton->setDisabled(false);
+    }
+    void allowLogin(){
         loginButton->setDisabled(false);
     }
 signals:
@@ -556,13 +566,104 @@ public slots:
     }
 };
 
+class ServerConnection:public QObject{
+    static constexpr int MAX_MESSAGE_SIZE = 4096;
+    static constexpr int MAX_BUFFER_SIZE = MAX_MESSAGE_SIZE*10;
+Q_OBJECT
+    QTcpSocket socket;
+    QByteArray buffer;
+
+    //A placeholder. When I'm finished with the current part I'll revisit and look at all uses individually. This function should not appear in the final code.
+    void unrecorevableError_todo(){
+        qFatal("paceholder, unrecorevable error");
+    }
+
+    QByteArray frameRequest(const ClientMessage& message){
+        QByteArray result;
+        quint32 size=message.message.size()+sizeof(message.type);
+
+        result.reserve(size+sizeof(size));
+        
+        result.append(parsing::packNumber(size));
+        result.append(parsing::packNumber((quint16)message.type));
+        result.append(message.message);
+
+        return result;
+    }
+
+    void handleServerMessage(const QByteArray& data){
+        ServerResponse framedResponse=parsing::unpackServerResponse(data);
+        if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::Ok)){
+            switch (framedResponse.inResponseTo){
+                case ClientMessageType::REQUEST_VERSION_VALIDATION:
+                    emit versionValidated();
+                    break;
+                default:
+                    unrecorevableError_todo();
+            }
+        }
+    }
+    void onReadyRead(){
+        buffer+=socket.readAll();
+        if(buffer.size()>MAX_BUFFER_SIZE){
+            unrecorevableError_todo();
+        }
+        while(true){
+            if(buffer.size()<4)break;
+            
+            quint32 len=parsing::unpackNumber<quint32>(buffer);
+            quint32 totalLen=len+4;
+            if(len>MAX_MESSAGE_SIZE){
+                unrecorevableError_todo();
+                return;
+            }
+            
+            if(buffer.size()<totalLen)break;
+            QByteArray rawMessage = buffer.mid(4,len);
+            buffer.remove(0,totalLen);
+            
+            
+            if(rawMessage.isEmpty()){
+                //todo, but not crucial.
+            }else if(rawMessage.size()<2){
+                //todo, but not crucial.
+            }else{
+                handleServerMessage(rawMessage);
+            }
+        }
+
+    }
+public:
+    ServerConnection(QObject* parent=nullptr):QObject(parent),socket(this){
+        connect(&socket, &QTcpSocket::readyRead,this,&ServerConnection::onReadyRead);
+    }
+
+public slots:
+    void validateVersion(){
+        socket.write(frameRequest({ClientMessageType::REQUEST_VERSION_VALIDATION,clientVersion}));
+    }
+    void connectToServer(){
+        socket.connectToHost("127.0.0.1", 12345);
+        if(socket.waitForConnected(5000)){// wait 5s in case of a slow connection
+            emit serverReady();
+        }else{
+            emit failedToConnectToServer();
+        }
+    }
+signals:
+    void failedToConnectToServer();
+    void versionValidated();
+    void serverReady();
+};
+
 class SessionController:public QObject{
 Q_OBJECT
+private:
     Language language=Language::English;    
     std::vector<TicketData> availableTickets;
     TicketData currentTicket;
     PaymentProcessor* paymentProcessor;
-
+    ServerConnection* serverConnection; 
     //placeholder, I will later connect it to the backend. Ultimately we want to be getting updates asynchronously.
     std::vector<TicketData> retrieveTicketListFromServer(){
         std::vector<TicketData> result;
@@ -586,6 +687,7 @@ Q_OBJECT
         return result;
     }
 
+
 public:
 
     const std::vector<TicketData>& getAvailableTickets() const {
@@ -598,12 +700,23 @@ public:
     
     SessionController(QObject* parent=nullptr):QObject(parent){
         paymentProcessor= new PaymentProcessor(this);
+        serverConnection= new ServerConnection(this);
         connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,this,&SessionController::purchaseCompleted);
         connect(paymentProcessor,&PaymentProcessor::amountInsertedChanged,this,&SessionController::amountInsertedChanged);
         connect(paymentProcessor,&PaymentProcessor::localInventoryChanged,this,&SessionController::localInventoryChanged);
         connect(paymentProcessor,&PaymentProcessor::returningCoins,this,&SessionController::returningCoins);
         connect(paymentProcessor,&PaymentProcessor::coinsReturned,this,&SessionController::coinsReturned);
+
+        connect(serverConnection,&ServerConnection::serverReady,serverConnection,&ServerConnection::validateVersion);
+        connect(serverConnection,&ServerConnection::versionValidated,this,&SessionController::serverReady);
+        
+        //should probably put UI in "sleep mode" and retry from time to time, but I can write that last. For now this is a fine placeholder:
+        connect(serverConnection,&ServerConnection::failedToConnectToServer,this,[](){
+            qFatal("paceholder, You probably forgot to fire up the server first");
+        });
     }
+
+
 
 public slots:
     
@@ -671,6 +784,11 @@ public slots:
         }
     }
 
+    void onUIReady(){
+        serverConnection->connectToServer();
+    }
+
+
 signals:
     void localInventoryChanged(CoinInventory);
     void unknownDBId();
@@ -684,6 +802,7 @@ signals:
     void returningCoins(bool couldNotGiveOutExactChange);
     void coinsReturned();
 
+    void serverReady();
 };
 
 class MainWindow:public QWidget{
@@ -716,6 +835,7 @@ public:
         stack.addWidget(loginPage);
         connect(loginPage,&LoginPage::dataBaseIDProvided,session,&SessionController::dbIdProvided);
         connect(session,&SessionController::unknownDBId,loginPage,&LoginPage::dbIdRejected);
+        connect(session,&SessionController::serverReady,loginPage,&LoginPage::allowLogin);
 
 
         mainPage=new MainPage;
@@ -776,6 +896,7 @@ public:
 
         stack.setCurrentWidget(loginPage);
         layout.addWidget(&stack);
+        session->onUIReady();
     }
 public slots:
 
@@ -817,7 +938,7 @@ public slots:
         chooseTicketPage->reinitialize(session->getAvailableTickets());
         stack.setCurrentWidget(chooseTicketPage);
     }
-
+signals:
 };
 
 int main(int argc, char *argv[]){
