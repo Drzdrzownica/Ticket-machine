@@ -4,8 +4,11 @@ TicketStore::TicketStore(){
     //pull tickets from database
     //log and rejects invalid ticket lengths or other issues
     //placeholder:
-    tickets.emplace("Lorem_Ipsum",Ticket{123,10});
-    tickets.emplace("Dolor_Sit_Amet",Ticket{111,0});
+    tickets.emplace("Lorem",Ticket{123,10});
+    tickets.emplace("Ipsum",Ticket{200,10});
+    tickets.emplace("Dolor",Ticket{113,2});
+    tickets.emplace("Sit",Ticket{499,50});
+    tickets.emplace("Amet",Ticket{111,0});
 
     if(tickets.size()>255)qFatal("Failed to start the server: Loaded too many tickets from the database");
     if(tickets.size()>10)qWarning()<<"SERVER_WARNING: unusually large amount of tickets loaded";
@@ -20,8 +23,8 @@ ServerMessage TicketStore::getTicketList(){
     QByteArray answer;
     
     if(tickets.size()>255)return {ServerMessageType::CRIT_SERVER_ERR_Ticket_list_overflow};
-    quint8 validTickets=0;
-    //reserve space for validTickets;
+    quint8 numberOfValidTickets=0;
+    //reserve space for numberOfValidTickets;
     answer.append('\0');
 
     for(auto iterator=tickets.cbegin();iterator!=tickets.cend();iterator++){
@@ -38,11 +41,11 @@ ServerMessage TicketStore::getTicketList(){
             qWarning()<<"SERVER_ERROR failed_to_process_ticket:"<<e.what();
             continue;
         }
-        validTickets++;
+        numberOfValidTickets++;
         answer.append(ticketPacketData);
     }
-    if(validTickets==0)return {ServerMessageType::CRIT_SERVER_ERR_No_valid_tickets_found};
-    answer.data()[0]=validTickets;
+    if(numberOfValidTickets==0)return {ServerMessageType::CRIT_SERVER_ERR_No_valid_tickets_found};
+    answer.data()[0]=numberOfValidTickets;
     return {ServerMessageType::OK,answer};
 }
 

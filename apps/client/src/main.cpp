@@ -142,6 +142,7 @@ enum class Language{
 struct TicketData{
     QString name;
     Cents price;
+    bool isAvalible=true;
 };
 
 
@@ -321,7 +322,11 @@ public:
         }else{
             errorMessage->setVisible(false);
             for(const auto& ticket:listOfTickets){
-                QPushButton* btn=new QPushButton(ticket.name,this);
+                QString buttonText=ticket.name;
+                if(ticket.isAvalible==false)buttonText+=" - SOLD OUT";
+                else buttonText+=" - "+centsToPriceString(ticket.price);
+                QPushButton* btn=new QPushButton(buttonText,this);
+                btn->setEnabled(ticket.isAvalible);
                 ticketButtons.push_back(btn);
                 buttonsLayout->addWidget(btn);
                 connect(btn,&QPushButton::clicked,this,[this,ticket](){
@@ -478,39 +483,37 @@ signals:
 
 
 class PaymentProcessor:public QObject{
-Q_OBJECT
-CoinInventory localInventory{};
-
-CoinInventory transactionInventory{};
-
-Cents ticketCost=0;
+    Q_OBJECT
+    CoinInventory localInventory{};
+    CoinInventory transactionInventory{};
+    Cents ticketCost=0;
 
 private:
 
-void outputCoins(CoinInventory coins){
+    void outputCoins(CoinInventory coins){
     for(const auto& [denomination,amount]:coins.getInventoryList()){
         qInfo()<<amount<<" coins of denomination "<<denomination<<" returned";    
     }
 }
 
 public:
-PaymentProcessor(QObject* parent=nullptr):QObject(parent){}
+    PaymentProcessor(QObject* parent=nullptr):QObject(parent){}
 
-void loadLocalInventory(CoinInventory inventory){
-    if(inventory!=localInventory){
-        localInventory = inventory;
-        emit localInventoryChanged(localInventory);
+    void loadLocalInventory(CoinInventory inventory){
+        if(inventory!=localInventory){
+            localInventory = inventory;
+            emit localInventoryChanged(localInventory);
+        }
     }
-}
 
-signals:
+    signals:
 
-void localInventoryChanged(CoinInventory);
-void amountInsertedChanged(Cents newValue,bool isEnough);
-void invalidCoinInserted();
-void purchaseCompleted();
-void returningCoins(bool couldNotGiveOutExactChange);
-void coinsReturned();
+    void localInventoryChanged(CoinInventory);
+    void amountInsertedChanged(Cents newValue,bool isEnough);
+    void invalidCoinInserted();
+    void purchaseCompleted();
+    void returningCoins(bool couldNotGiveOutExactChange);
+    void coinsReturned();
 
 public slots:
     void DEBUGCoinAdded(Cents cents){
@@ -591,6 +594,20 @@ Q_OBJECT
         return result;
     }
 
+    //note to consider error-handeling, but it's fine to leave it for later
+    void handleRawTicketListData(const QByteArray& data){
+        std::vector<TicketData> result;
+        quint32 offset=0;
+        qint8 numberOfTickets = parsing::unpackNumber<quint8>(data,offset);
+        for(int i=0;i<numberOfTickets;i++){
+            QByteArray name=parsing::unpack8BitPrefixedByteArray(data,offset);
+            quint32 cost = parsing::unpackNumber<quint32>(data,offset);
+            bool isAvalible=parsing::unpackNumber<quint8>(data,offset);
+            result.push_back(TicketData{name,cost,isAvalible});
+        }
+        emit ticketListUpdated(result);
+    };
+
     void handleServerMessage(const QByteArray& data){
         ServerResponse framedResponse=parsing::unpackServerResponse(data);
         if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::Ok)){
@@ -598,11 +615,15 @@ Q_OBJECT
                 case ClientMessageType::REQUEST_VERSION_VALIDATION:
                     emit versionValidated();
                     break;
+                case ClientMessageType::REQUEST_GET_TICKET_LIST:
+                    handleRawTicketListData(framedResponse.message);
+                    break;
                 default:
                     unrecorevableError_todo();
             }
         }
     }
+
     void onReadyRead(){
         buffer+=socket.readAll();
         if(buffer.size()>MAX_BUFFER_SIZE){
@@ -633,7 +654,9 @@ Q_OBJECT
         }
 
     }
+
 public:
+
     ServerConnection(QObject* parent=nullptr):QObject(parent),socket(this){
         connect(&socket, &QTcpSocket::readyRead,this,&ServerConnection::onReadyRead);
     }
@@ -650,10 +673,15 @@ public slots:
             emit failedToConnectToServer();
         }
     }
+    void requestTicketList(){
+        socket.write(frameRequest({ClientMessageType::REQUEST_GET_TICKET_LIST}));
+
+    }
 signals:
     void failedToConnectToServer();
     void versionValidated();
     void serverReady();
+    void ticketListUpdated(std::vector<TicketData>);
 };
 
 class SessionController:public QObject{
@@ -664,13 +692,7 @@ private:
     TicketData currentTicket;
     PaymentProcessor* paymentProcessor;
     ServerConnection* serverConnection; 
-    //placeholder, I will later connect it to the backend. Ultimately we want to be getting updates asynchronously.
-    std::vector<TicketData> retrieveTicketListFromServer(){
-        std::vector<TicketData> result;
-        result.push_back({"lorem",1});
-        result.push_back({"ipsum",2});
-        return result;
-    }
+    bool serverInitiated=false;
 
     //Ultimatly this will be a server call, so for now this is a bare-bones placeholder.
     bool verifyName(QString name){
@@ -683,6 +705,7 @@ private:
         CoinInventory result;
         result.addCoin(1,10);    //$0.01 *10
         result.addCoin(5,2);
+        result.addCoin(25,7);
         result.addCoin(100);  //$1 * 1
         return result;
     }
@@ -708,7 +731,11 @@ public:
         connect(paymentProcessor,&PaymentProcessor::coinsReturned,this,&SessionController::coinsReturned);
 
         connect(serverConnection,&ServerConnection::serverReady,serverConnection,&ServerConnection::validateVersion);
-        connect(serverConnection,&ServerConnection::versionValidated,this,&SessionController::serverReady);
+
+        //after version has been validated server should send updates to the ticketList on it's own (that part is not hooked up yet), but we need the initial list.
+        connect(serverConnection,&ServerConnection::versionValidated,serverConnection,&ServerConnection::requestTicketList);
+        
+        connect(serverConnection,&ServerConnection::ticketListUpdated,this,&SessionController::updateTicketList);
         
         //should probably put UI in "sleep mode" and retry from time to time, but I can write that last. For now this is a fine placeholder:
         connect(serverConnection,&ServerConnection::failedToConnectToServer,this,[](){
@@ -719,6 +746,14 @@ public:
 
 
 public slots:
+    void updateTicketList(std::vector<TicketData> list){
+        availableTickets=list;
+        if(serverInitiated)emit ticketListChanged(availableTickets);
+        else{
+            serverInitiated=true;
+            emit serverReady();
+        }
+    }
     
     void DEBUGCoinAdded(Cents coin){
         paymentProcessor->DEBUGCoinAdded(coin);
@@ -734,7 +769,6 @@ public slots:
     void dbIdProvided(QString dbId){
         if(dbId=="temp"){
             paymentProcessor->loadLocalInventory(getLocalCoinInventory(dbId));
-            availableTickets=retrieveTicketListFromServer();
             emit sessionReady();
         }else{
             emit unknownDBId();
@@ -790,6 +824,7 @@ public slots:
 
 
 signals:
+    void ticketListChanged(std::vector<TicketData>);
     void localInventoryChanged(CoinInventory);
     void unknownDBId();
     void nameAccepted(TicketData);
