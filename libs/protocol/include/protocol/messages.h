@@ -63,12 +63,12 @@ static_assert((quint16)ServerMessageType::OK_END_RESERVED<0x5000);
 enum class ClientMessageType:quint16{
     Invalid=0x0000,
     REQUEST_BEGIN_RESERVED,
-    REQUEST_VERSION_VALIDATION,
-    REQUEST_GET_TICKET_LIST,
-    REQUEST_START_CHECKOUT,
-    REQUEST_BUY,
-    REQUEST_CANCEL_CHECKOUT,
-    REQUEST_END_RESERVED,
+    REQUEST_Version_validation,
+    REQUEST_Get_ticket_list,
+    REQUEST_Start_checkout,
+    REQUEST_Buy,
+    REQUEST_Cancel_checkout,
+    REQUEST_END_RESERVED
 };
 
 constexpr quint16 CATEGORY_MASK = 0xF000;

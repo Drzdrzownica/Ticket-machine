@@ -612,10 +612,10 @@ Q_OBJECT
         ServerResponse framedResponse=parsing::unpackServerResponse(data);
         if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::Ok)){
             switch (framedResponse.inResponseTo){
-                case ClientMessageType::REQUEST_VERSION_VALIDATION:
+                case ClientMessageType::REQUEST_Version_validation:
                     emit versionValidated();
                     break;
-                case ClientMessageType::REQUEST_GET_TICKET_LIST:
+                case ClientMessageType::REQUEST_Get_ticket_list:
                     handleRawTicketListData(framedResponse.message);
                     break;
                 default:
@@ -663,7 +663,7 @@ public:
 
 public slots:
     void validateVersion(){
-        socket.write(frameRequest({ClientMessageType::REQUEST_VERSION_VALIDATION,clientVersion}));
+        socket.write(frameRequest({ClientMessageType::REQUEST_Version_validation,clientVersion}));
     }
     void connectToServer(){
         socket.connectToHost("127.0.0.1", 12345);
@@ -674,7 +674,7 @@ public slots:
         }
     }
     void requestTicketList(){
-        socket.write(frameRequest({ClientMessageType::REQUEST_GET_TICKET_LIST}));
+        socket.write(frameRequest({ClientMessageType::REQUEST_Get_ticket_list}));
 
     }
 signals:

@@ -30,25 +30,25 @@ ServerMessage ClientSession::validateClientVersion(const ClientMessage& request)
 }
 
 ServerMessage ClientSession::craftResponse(const ClientMessage& request){
-    if(request.type==ClientMessageType::REQUEST_VERSION_VALIDATION){
+    if(request.type==ClientMessageType::REQUEST_Version_validation){
         return validateClientVersion(request);
     }
     if(versionValidated==false){
         return {ServerMessageType::ERR_Version_not_validated};
     }
-    if(request.type==ClientMessageType::REQUEST_GET_TICKET_LIST){
+    if(request.type==ClientMessageType::REQUEST_Get_ticket_list){
         if(request.message.isEmpty()==false)return {ServerMessageType::ERR_Incorrect_argument_count};
         else return store->getTicketList();
     }
     //Format: START_CHECKOUT <ticket_name>
-    if(request.type==ClientMessageType::REQUEST_START_CHECKOUT){
+    if(request.type==ClientMessageType::REQUEST_Start_checkout){
         return store->tryCheckout(id,request);
     }
     //format: BUY <customer_name> <ticket_name>
-    if(request.type==ClientMessageType::REQUEST_BUY){
+    if(request.type==ClientMessageType::REQUEST_Buy){
         return store->confirmPurchase(id,request);
     }
-    if(request.type==ClientMessageType::REQUEST_CANCEL_CHECKOUT){
+    if(request.type==ClientMessageType::REQUEST_Cancel_checkout){
         if(request.message.isEmpty()==false)return {ServerMessageType::ERR_Incorrect_argument_count};
         else return store->tryCancelCheckout(id);
     }
