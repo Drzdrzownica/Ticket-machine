@@ -49,10 +49,10 @@ ServerMessage TicketStore::getTicketList(){
     return {ServerMessageType::OK,answer};
 }
 
-ServerMessage TicketStore::tryCancelCheckout(quint64 id,bool disconnectCleanup){
+ServerMessage TicketStore::tryCancelCheckout(quint64 sessionId,bool disconnectCleanup){
     //todo: connect so it runs 5 minutes after successful tryCheckout and sends such information through the socket, unless called or canceled by buy.
 
-    auto currentCheckout=inCheckout.find(id);
+    auto currentCheckout=inCheckout.find(sessionId);
     if(currentCheckout==inCheckout.end()){
         if(disconnectCleanup)return {ServerMessageType::OK_No_change};
         else return {ServerMessageType::ERR_No_checkout_in_progress};
@@ -68,7 +68,7 @@ ServerMessage TicketStore::tryCancelCheckout(quint64 id,bool disconnectCleanup){
     return {ServerMessageType::OK};
 }
 
-ServerMessage TicketStore::tryCheckout(quint64 id,const ClientMessage& request){
+ServerMessage TicketStore::tryCheckout(quint64 sessionId,const ClientMessage& request){
     if(request.message.isEmpty())return {ServerMessageType::ERR_Checkout_with_no_arguments};
     
     QByteArray ticketName;
@@ -82,7 +82,7 @@ ServerMessage TicketStore::tryCheckout(quint64 id,const ClientMessage& request){
     if(ticketName.isEmpty())return {ServerMessageType::ERR_Ticket_name_empty};
 
 
-    auto checkout = inCheckout.find(id);
+    auto checkout = inCheckout.find(sessionId);
     if(checkout!=inCheckout.end()){
         if(checkout.value()==ticketName)return {ServerMessageType::CLIENT_WARNING_Ticket_already_in_checkout};
         else return {ServerMessageType::ERR_Different_ticket_already_in_checkout};
@@ -91,7 +91,7 @@ ServerMessage TicketStore::tryCheckout(quint64 id,const ClientMessage& request){
     if(ticket==tickets.end())return {ServerMessageType::ERR_Invalid_ticket_name};
     
     if(ticket.value().availableAmount>0){
-        inCheckout.emplace(id,ticketName);
+        inCheckout.emplace(sessionId,ticketName);
         ticket.value().availableAmount--;
         return {ServerMessageType::OK,ticketName};
     }else{
@@ -110,7 +110,7 @@ bool TicketStore::validateName(const QByteArray& buyerName){
     return true;
 }
 
-ServerMessage TicketStore::confirmPurchase(quint64 id,const ClientMessage& request){
+ServerMessage TicketStore::confirmPurchase(quint64 sessionId,const ClientMessage& request){
 
     QByteArray buyerName;
     QByteArray ticketName;
@@ -124,7 +124,7 @@ ServerMessage TicketStore::confirmPurchase(quint64 id,const ClientMessage& reque
     }
     if(buyerName.isEmpty() || ticketName.isEmpty())return {ServerMessageType::ERR_Empty_string_argument};
 
-    auto reservation = inCheckout.find(id);
+    auto reservation = inCheckout.find(sessionId);
 
     if(reservation==inCheckout.end())return {ServerMessageType::ERR_Item_not_in_checkout};
     if(tickets.find(ticketName)==tickets.end()){

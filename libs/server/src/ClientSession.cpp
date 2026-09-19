@@ -1,11 +1,11 @@
 #include "server/ClientSession.h"
 
 // ClientSession takes ownership of socket.
-ClientSession::ClientSession(QTcpSocket* socket,TicketStore* store):id(++nextId),socket(socket),store(store){
+ClientSession::ClientSession(QTcpSocket* socket,TicketStore* store):sessionId(++nextId),socket(socket),store(store){
     socket->setParent(this);
     connect(socket, &QTcpSocket::readyRead,this, [this]() {onReadyRead();});
     connect(socket, &QTcpSocket::disconnected,this,[this]{
-        this->store->tryCancelCheckout(id,true);
+        this->store->tryCancelCheckout(sessionId,true);
         deleteLater();
     });
 }
@@ -42,15 +42,15 @@ ServerMessage ClientSession::craftResponse(const ClientMessage& request){
     }
     //Format: START_CHECKOUT <ticket_name>
     if(request.type==ClientMessageType::REQUEST_Start_checkout){
-        return store->tryCheckout(id,request);
+        return store->tryCheckout(sessionId,request);
     }
     //format: BUY <customer_name> <ticket_name>
     if(request.type==ClientMessageType::REQUEST_Buy){
-        return store->confirmPurchase(id,request);
+        return store->confirmPurchase(sessionId,request);
     }
     if(request.type==ClientMessageType::REQUEST_Cancel_checkout){
         if(request.message.isEmpty()==false)return {ServerMessageType::ERR_Incorrect_argument_count};
-        else return store->tryCancelCheckout(id);
+        else return store->tryCancelCheckout(sessionId);
     }
     return {ServerMessageType::ERR_Unknown_Command};
 }
@@ -141,7 +141,7 @@ void ClientSession::onReadyRead() {
 
         //debug temporary!!!
 
-        qInfo()<<id<<" :: "<< quint64(request.type)<<":"<<request.message<<"|"<<Qt::hex<<quint64(response.type)<<":"<<response.message;
+        qInfo()<<sessionId<<" :: "<< quint64(request.type)<<":"<<request.message<<"|"<<Qt::hex<<quint64(response.type)<<":"<<response.message;
 
         //\debug
 

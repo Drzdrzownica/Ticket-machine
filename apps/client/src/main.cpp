@@ -576,9 +576,10 @@ Q_OBJECT
     QTcpSocket socket;
     QByteArray buffer;
 
-    //A placeholder. When I'm finished with the current part I'll revisit and look at all uses individually. This function should not appear in the final code.
-    void unrecorevableError_todo(){
-        qFatal("paceholder, unrecorevable error");
+    //When I'm finished with the current part I'll revisit and look at all calls individually. Should be broken down into multiple functions.
+    //Also criticly, remamber to eject all current transaction money before shutdown
+    [[deprecated("placeholder function")]] void unrecorevableError_todo(QByteArray hint){
+        qFatal("paceholder, unrecorevable error: %s", qPrintable(hint));
     }
 
     QByteArray frameRequest(const ClientMessage& message){
@@ -610,24 +611,41 @@ Q_OBJECT
 
     void handleServerMessage(const QByteArray& data){
         ServerResponse framedResponse=parsing::unpackServerResponse(data);
-        if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::Ok)){
-            switch (framedResponse.inResponseTo){
-                case ClientMessageType::REQUEST_Version_validation:
-                    emit versionValidated();
-                    break;
+
+        //the following two checks are placeholders. Their bodies are to be eventually replaced.
+        if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ServerCrit)){
+            unrecorevableError_todo("Something went __seriously__ wrong with the server and it had to shut down");
+        }else if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ClientCrit)){
+            unrecorevableError_todo("Something went __seriously__ wrong and server requested a shut down. Contact the administrator");
+        }
+        
+        switch (framedResponse.inResponseTo){
+            case ClientMessageType::REQUEST_Version_validation:
+                if(framedResponse.type==ServerMessageType::OK)emit versionValidated();
+                else unrecorevableError_todo("Version_validation not OK");
+                break;
                 case ClientMessageType::REQUEST_Get_ticket_list:
-                    handleRawTicketListData(framedResponse.message);
-                    break;
-                default:
-                    unrecorevableError_todo();
-            }
+                if(framedResponse.type==ServerMessageType::OK)handleRawTicketListData(framedResponse.message);
+                else unrecorevableError_todo("Get_ticket_list not OK");
+                break;
+            case ClientMessageType::REQUEST_Start_checkout:
+                //todo
+                break;
+            case ClientMessageType::REQUEST_Buy:
+                //todo
+                break;
+            case ClientMessageType::REQUEST_Cancel_checkout:
+                //todo
+                break;
+            default:
+                unrecorevableError_todo("response to unknown request type");
         }
     }
 
     void onReadyRead(){
         buffer+=socket.readAll();
         if(buffer.size()>MAX_BUFFER_SIZE){
-            unrecorevableError_todo();
+            unrecorevableError_todo("server flooded machine");
         }
         while(true){
             if(buffer.size()<4)break;
@@ -635,19 +653,15 @@ Q_OBJECT
             quint32 len=parsing::unpackNumber<quint32>(buffer);
             quint32 totalLen=len+4;
             if(len>MAX_MESSAGE_SIZE){
-                unrecorevableError_todo();
+                unrecorevableError_todo("too long message from server");
                 return;
-            }
-            
+            } 
             if(buffer.size()<totalLen)break;
             QByteArray rawMessage = buffer.mid(4,len);
             buffer.remove(0,totalLen);
             
-            
-            if(rawMessage.isEmpty()){
-                //todo, but not crucial.
-            }else if(rawMessage.size()<2){
-                //todo, but not crucial.
+            if(rawMessage.size()<4){
+                unrecorevableError_todo("server message too short");
             }else{
                 handleServerMessage(rawMessage);
             }

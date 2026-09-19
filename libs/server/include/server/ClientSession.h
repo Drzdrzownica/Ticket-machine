@@ -6,7 +6,7 @@
 
 class ClientSession : public QObject{
 public:
-    const quint64 id;
+    const quint64 sessionId;
     // ClientSession takes ownership of socket.
     explicit ClientSession(QTcpSocket* socket,TicketStore* store);
 

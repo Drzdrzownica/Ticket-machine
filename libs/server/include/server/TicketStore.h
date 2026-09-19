@@ -17,12 +17,12 @@ public:
 
     ServerMessage getTicketList();
 
-    ServerMessage tryCancelCheckout(quint64 id,bool disconnectCleanup=false);
+    ServerMessage tryCancelCheckout(quint64 sessionId,bool disconnectCleanup=false);
 
-    ServerMessage tryCheckout(quint64 id,const ClientMessage& request);
+    ServerMessage tryCheckout(quint64 sessionId,const ClientMessage& request);
 
     bool validateName(const QByteArray& buyerName);
 
-    ServerMessage confirmPurchase(quint64 id,const ClientMessage& request);
+    ServerMessage confirmPurchase(quint64 sessionId,const ClientMessage& request);
 };
 #endif
