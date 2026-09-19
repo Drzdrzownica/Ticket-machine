@@ -12,9 +12,8 @@
 #include <QTcpSocket>
 
 #include "protocol/serialization.h"
+#include "protocol/constants.h"
 
-QByteArray clientVersion = "0.0.0.1";
-using Cents = quint64;
 
 struct CoinInventory{
     static constexpr std::array<Cents,8> acceptedDenominationsCents{1,5,10,25,100,500,1000,2000};
@@ -51,7 +50,8 @@ public:
     }
 
     std::vector<std::pair<Cents,quint64>> getInventoryList()const{
-        std::vector<std::pair<Cents,quint64>>result;
+        std::vector<std::pair<Cents,quint64>> result;
+        result.reserve(inventory.size());
         for(std::size_t i=0;i<inventory.size();i++){
             result.push_back({acceptedDenominationsCents[i],inventory[i]});
         }
@@ -139,12 +139,18 @@ enum class Language{
     English
 };
 
-struct TicketData{
-    QString name;
-    Cents price;
-    bool isAvalible=true;
+enum TransactionCancelationReason{
+    CouldNotGiveOutChange,
+    UserRequested,
+    Error
 };
 
+struct TicketData{
+    TicketId Id; //alias of an integral type defined in constants.h for compatibility with server
+    QString name;
+    Cents price; //same as above
+    bool isAvailable=true;
+};
 
 class LoginPage: public QWidget{
     Q_OBJECT
@@ -323,10 +329,10 @@ public:
             errorMessage->setVisible(false);
             for(const auto& ticket:listOfTickets){
                 QString buttonText=ticket.name;
-                if(ticket.isAvalible==false)buttonText+=" - SOLD OUT";
+                if(ticket.isAvailable==false)buttonText+=" - SOLD OUT";
                 else buttonText+=" - "+centsToPriceString(ticket.price);
                 QPushButton* btn=new QPushButton(buttonText,this);
-                btn->setEnabled(ticket.isAvalible);
+                btn->setEnabled(ticket.isAvailable);
                 ticketButtons.push_back(btn);
                 buttonsLayout->addWidget(btn);
                 connect(btn,&QPushButton::clicked,this,[this,ticket](){
@@ -443,17 +449,29 @@ class ReturningMoneyPage:public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
 
-    QLabel* couldNotProduceChangeMessage=new QLabel("Sorry, the machine could not produce exact change");
+    QLabel* reasonMessage=new QLabel;
     QLabel* pleaseWaitMessage=new QLabel("Returning inserted coins. Please wait.");
 public:
 
     ReturningMoneyPage():layout(this){
-        layout.addWidget(couldNotProduceChangeMessage);
+        layout.addWidget(reasonMessage);
         layout.addWidget(pleaseWaitMessage);
     }
-    void reinitialize(bool couldNotGiveChange){
-        if(couldNotGiveChange)couldNotProduceChangeMessage->setVisible(true);
-        else couldNotProduceChangeMessage->setVisible(false);
+    void reinitialize(TransactionCancelationReason reason){
+        reasonMessage->setVisible(true);
+        switch (reason){
+        case TransactionCancelationReason::CouldNotGiveOutChange:
+            reasonMessage->setText("Sorry, the machine could not produce the exact change");
+            break;
+        case TransactionCancelationReason::UserRequested:
+            reasonMessage->setVisible(false);
+            break;
+        case TransactionCancelationReason::Error:
+            //continue to the default case
+        default:
+            reasonMessage->setText("Sorry, something went wrong. Returning inserted money");
+            break;
+        }
     }
 };
 
@@ -480,7 +498,6 @@ public:
 signals:
     void printingFinished();
 };
-
 
 class PaymentProcessor:public QObject{
     Q_OBJECT
@@ -512,7 +529,7 @@ public:
     void amountInsertedChanged(Cents newValue,bool isEnough);
     void invalidCoinInserted();
     void purchaseCompleted();
-    void returningCoins(bool couldNotGiveOutExactChange);
+    void returningCoins(TransactionCancelationReason);
     void coinsReturned();
 
 public slots:
@@ -534,14 +551,13 @@ public slots:
     void tryAcceptPurchase(){
         Cents sumInserted=transactionInventory.getTotalAmount();
         if(sumInserted<ticketCost){
-            cancelTransaction(true);
+            cancelTransaction(TransactionCancelationReason::Error);
         }else{
             Cents changeValue=sumInserted-ticketCost;
             CoinInventory fullInventory=localInventory+transactionInventory;
             auto change=fullInventory.coinChange(changeValue);
             if(!change){
-                qWarning("Attempted purchase finalization with insufficient money");
-                cancelTransaction(false);
+                cancelTransaction(TransactionCancelationReason::CouldNotGiveOutChange);
             }else{
                 localInventory.moveInventoryFrom(transactionInventory); 
                 outputCoins(change.value());
@@ -553,8 +569,8 @@ public slots:
         }
     }
 
-    void cancelTransaction(bool couldNotGiveOutExactChange = false){
-        emit returningCoins(couldNotGiveOutExactChange);
+    void cancelTransaction(TransactionCancelationReason reason){
+        emit returningCoins(reason);
         outputCoins(transactionInventory);
         transactionInventory={};
         //abstraction, it would take time for real machine to spit out all the inserted coins back
@@ -599,12 +615,13 @@ Q_OBJECT
     void handleRawTicketListData(const QByteArray& data){
         std::vector<TicketData> result;
         quint32 offset=0;
-        qint8 numberOfTickets = parsing::unpackNumber<quint8>(data,offset);
+        quint8 numberOfTickets = parsing::unpackNumber<quint8>(data,offset);
         for(int i=0;i<numberOfTickets;i++){
+            TicketId Id = parsing::unpackNumber<TicketId>(data,offset);
             QByteArray name=parsing::unpack8BitPrefixedByteArray(data,offset);
-            quint32 cost = parsing::unpackNumber<quint32>(data,offset);
-            bool isAvalible=parsing::unpackNumber<quint8>(data,offset);
-            result.push_back(TicketData{name,cost,isAvalible});
+            Cents cost = parsing::unpackNumber<Cents>(data,offset);
+            bool isAvailable=parsing::unpackNumber<quint8>(data,offset);
+            result.push_back(TicketData{Id,name,cost,isAvailable});
         }
         emit ticketListUpdated(result);
     };
@@ -677,7 +694,7 @@ public:
 
 public slots:
     void validateVersion(){
-        socket.write(frameRequest({ClientMessageType::REQUEST_Version_validation,clientVersion}));
+        socket.write(frameRequest({ClientMessageType::REQUEST_Version_validation,protocolVersion}));
     }
     void connectToServer(){
         socket.connectToHost("127.0.0.1", 12345);
@@ -800,7 +817,7 @@ public slots:
     }
 
     void cancelTransaction(){
-        paymentProcessor->cancelTransaction();
+        paymentProcessor->cancelTransaction(TransactionCancelationReason::UserRequested);
     }
 
     void tryCoin(QString coin){
@@ -848,7 +865,7 @@ signals:
     void invalidCoinInserted();
     void purchaseCompleted();
     void ticketChoiceAccepted(TicketData);
-    void returningCoins(bool couldNotGiveOutExactChange);
+    void returningCoins(TransactionCancelationReason);
     void coinsReturned();
 
     void serverReady();
@@ -954,8 +971,8 @@ public slots:
         stack.setCurrentWidget(mainPage);
     }
 
-    void goToReturningMoneyPage(bool couldNotGiveOutChange=false){
-        returningMoneyPage->reinitialize(couldNotGiveOutChange);
+    void goToReturningMoneyPage(TransactionCancelationReason reason){
+        returningMoneyPage->reinitialize(reason);
         stack.setCurrentWidget(returningMoneyPage);
     }
 

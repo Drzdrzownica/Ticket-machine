@@ -2,27 +2,31 @@
 #define TICKET_STORE_H
 #pragma once
 #include "protocol/serialization.h"
+#include "protocol/constants.h"
+
+using SessionId = quint64;
 
 class TicketStore{
     struct Ticket{
-        quint32 cost;
+        QByteArray name;
+        Cents cost;
         quint32 availableAmount;
-        Ticket(quint32 cost,quint32 amount):cost(cost),availableAmount(amount){};
+        Ticket(QByteArray name,Cents cost,quint32 amount):name(name),cost(cost),availableAmount(amount){};
         Ticket()=default;
     };
-    QHash<QByteArray,Ticket> tickets;
-    QHash<quint64,QByteArray> inCheckout;
+    QHash<TicketId,Ticket> tickets;
+    QHash<SessionId,TicketId> inCheckout;
 public:
     TicketStore();
 
     ServerMessage getTicketList();
 
-    ServerMessage tryCancelCheckout(quint64 sessionId,bool disconnectCleanup=false);
+    ServerMessage tryCancelCheckout(SessionId sessionId,bool disconnectCleanup=false);
 
-    ServerMessage tryCheckout(quint64 sessionId,const ClientMessage& request);
+    ServerMessage tryCheckout(SessionId sessionId,const ClientMessage& request);
 
     bool validateName(const QByteArray& buyerName);
 
-    ServerMessage confirmPurchase(quint64 sessionId,const ClientMessage& request);
+    ServerMessage confirmPurchase(SessionId sessionId,const ClientMessage& request);
 };
 #endif

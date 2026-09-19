@@ -4,11 +4,11 @@ TicketStore::TicketStore(){
     //pull tickets from database
     //log and rejects invalid ticket lengths or other issues
     //placeholder:
-    tickets.emplace("Lorem",Ticket{123,10});
-    tickets.emplace("Ipsum",Ticket{200,10});
-    tickets.emplace("Dolor",Ticket{113,2});
-    tickets.emplace("Sit",Ticket{499,50});
-    tickets.emplace("Amet",Ticket{111,0});
+    tickets.emplace(0,Ticket{"Lorem",123,10});
+    tickets.emplace(1,Ticket{"Ipsum",200,10});
+    tickets.emplace(2,Ticket{"Dolor",113,2});
+    tickets.emplace(3,Ticket{"Sit",499,50});
+    tickets.emplace(4,Ticket{"Amet",111,0});
 
     if(tickets.size()>255)qFatal("Failed to start the server: Loaded too many tickets from the database");
     if(tickets.size()>10)qWarning()<<"SERVER_WARNING: unusually large amount of tickets loaded";
@@ -28,12 +28,13 @@ ServerMessage TicketStore::getTicketList(){
     answer.append('\0');
 
     for(auto iterator=tickets.cbegin();iterator!=tickets.cend();iterator++){
-        const QByteArray& name=iterator.key();
+        const TicketId& ticketId=iterator.key();
         const Ticket& data=iterator.value();
 
         QByteArray ticketPacketData;
         try{
-            ticketPacketData.append(parsing::pack8BitPrefixedByteArray(name));
+            ticketPacketData.append(parsing::packNumber(ticketId));
+            ticketPacketData.append(parsing::pack8BitPrefixedByteArray(data.name));
             ticketPacketData.append(parsing::packNumber(data.cost));
             //only if it's available - yes/no.
             ticketPacketData.append((data.availableAmount>0) ? 1 : 0);
@@ -49,7 +50,7 @@ ServerMessage TicketStore::getTicketList(){
     return {ServerMessageType::OK,answer};
 }
 
-ServerMessage TicketStore::tryCancelCheckout(quint64 sessionId,bool disconnectCleanup){
+ServerMessage TicketStore::tryCancelCheckout(SessionId sessionId,bool disconnectCleanup){
     //todo: connect so it runs 5 minutes after successful tryCheckout and sends such information through the socket, unless called or canceled by buy.
 
     auto currentCheckout=inCheckout.find(sessionId);
@@ -68,32 +69,30 @@ ServerMessage TicketStore::tryCancelCheckout(quint64 sessionId,bool disconnectCl
     return {ServerMessageType::OK};
 }
 
-ServerMessage TicketStore::tryCheckout(quint64 sessionId,const ClientMessage& request){
+ServerMessage TicketStore::tryCheckout(SessionId sessionId,const ClientMessage& request){
     if(request.message.isEmpty())return {ServerMessageType::ERR_Checkout_with_no_arguments};
     
-    QByteArray ticketName;
+    TicketId ticketId;
     try{
         quint32 offset=0;
-        ticketName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
+        ticketId=parsing::unpackNumber<TicketId>(request.message,offset);
         if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
     }catch(std::exception& e){
         return {ServerMessageType::ERR_Parsing_error};
     }
-    if(ticketName.isEmpty())return {ServerMessageType::ERR_Ticket_name_empty};
-
 
     auto checkout = inCheckout.find(sessionId);
     if(checkout!=inCheckout.end()){
-        if(checkout.value()==ticketName)return {ServerMessageType::CLIENT_WARNING_Ticket_already_in_checkout};
+        if(checkout.value()==ticketId)return {ServerMessageType::CLIENT_WARNING_Ticket_already_in_checkout};
         else return {ServerMessageType::ERR_Different_ticket_already_in_checkout};
     }
-    auto ticket = tickets.find(ticketName);
+    auto ticket = tickets.find(ticketId);
     if(ticket==tickets.end())return {ServerMessageType::ERR_Invalid_ticket_name};
     
     if(ticket.value().availableAmount>0){
-        inCheckout.emplace(sessionId,ticketName);
+        inCheckout.emplace(sessionId,ticketId);
         ticket.value().availableAmount--;
-        return {ServerMessageType::OK,ticketName};
+        return {ServerMessageType::OK,parsing::packNumber(ticketId)};
     }else{
         return {ServerMessageType::ERR_No_tickets_in_stock_during_checkout};
     }
@@ -110,33 +109,33 @@ bool TicketStore::validateName(const QByteArray& buyerName){
     return true;
 }
 
-ServerMessage TicketStore::confirmPurchase(quint64 sessionId,const ClientMessage& request){
+ServerMessage TicketStore::confirmPurchase(SessionId sessionId,const ClientMessage& request){
 
     QByteArray buyerName;
-    QByteArray ticketName;
+    TicketId ticketId;
     try{
         quint32 offset=0;
         buyerName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
-        ticketName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
+        ticketId=parsing::unpackNumber<TicketId>(request.message,offset);
         if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
     }catch(std::exception& e){
         return {ServerMessageType::ERR_Parsing_error};
     }
-    if(buyerName.isEmpty() || ticketName.isEmpty())return {ServerMessageType::ERR_Empty_string_argument};
+    if(buyerName.isEmpty())return {ServerMessageType::ERR_Empty_string_argument};
 
     auto reservation = inCheckout.find(sessionId);
 
     if(reservation==inCheckout.end())return {ServerMessageType::ERR_Item_not_in_checkout};
-    if(tickets.find(ticketName)==tickets.end()){
+    if(tickets.find(ticketId)==tickets.end()){
         inCheckout.erase(reservation);
         return {ServerMessageType::ERR_Ticket_no_longer_valid};
     }
-    if(reservation.value()!=ticketName)return {ServerMessageType::ERR_Wrong_item_in_checkout};
+    if(reservation.value()!=ticketId)return {ServerMessageType::ERR_Wrong_item_in_checkout};
     if(validateName(buyerName)==false)return {ServerMessageType::ERR_Disallowed_name_try_again};
     //todo: stop the 5 minutes cancel-checkout clock
-    //todo: Push [name][ticket_name] into the database. On fail return error. For now as a placeholder:
-    qInfo()<<buyerName+" purchased ticket for "+ticketName;
+    //todo: Push [name][ticket_ID] into the database. On fail return error. For now as a placeholder:
+    qInfo()<<buyerName+" purchased ticket for id"<<ticketId;
     inCheckout.erase(reservation);
     
-    return {ServerMessageType::OK,ticketName};
+    return {ServerMessageType::OK,parsing::packNumber<TicketId>(ticketId)};
 }

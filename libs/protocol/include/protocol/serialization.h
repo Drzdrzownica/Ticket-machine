@@ -3,6 +3,7 @@
 #include "protocol/messages.h"
 #include <QtEndian>
 
+
 namespace parsing{
     QByteArray pack8BitPrefixedByteArray(const QByteArray& array);
     QByteArray unpack8BitPrefixedByteArray(const QByteArray& parameters,quint32& offset);

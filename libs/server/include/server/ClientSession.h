@@ -6,7 +6,7 @@
 
 class ClientSession : public QObject{
 public:
-    const quint64 sessionId;
+    const SessionId sessionId;
     // ClientSession takes ownership of socket.
     explicit ClientSession(QTcpSocket* socket,TicketStore* store);
 
@@ -14,9 +14,8 @@ private:
     //placeholder const values
     static constexpr int MAX_REQUEST_SIZE = 4096;
     static constexpr int MAX_BUFFER_SIZE = MAX_REQUEST_SIZE*10;
-    static constexpr QByteArrayView version = "0.0.0.1";
 
-    static inline std::atomic<quint64> nextId{0};
+    static inline std::atomic<SessionId> nextId{0};
 
     bool versionValidated=false;
     QTcpSocket* socket;

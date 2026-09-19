@@ -12,14 +12,14 @@ ClientSession::ClientSession(QTcpSocket* socket,TicketStore* store):sessionId(++
 
 ServerMessage ClientSession::validateClientVersion(const ClientMessage& request){
     if(versionValidated){
-        if(request.message==version)return {ServerMessageType::CLIENT_WARNING_Version_already_validated};
+        if(request.message==protocolVersion)return {ServerMessageType::CLIENT_WARNING_Version_already_validated};
         else {
             //just in case invalidate, but effectively redundant since crit_err will drop the connection
             versionValidated=false;
             return {ServerMessageType::CRIT_CLIENT_ERR_Version_invalidated};
         }
     }else{
-        if(request.message==version){
+        if(request.message==protocolVersion){
             versionValidated=true;
             return {ServerMessageType::OK};
         }
@@ -40,11 +40,11 @@ ServerMessage ClientSession::craftResponse(const ClientMessage& request){
         if(request.message.isEmpty()==false)return {ServerMessageType::ERR_Incorrect_argument_count};
         else return store->getTicketList();
     }
-    //Format: START_CHECKOUT <ticket_name>
+    //Format: START_CHECKOUT <ticket_ID>
     if(request.type==ClientMessageType::REQUEST_Start_checkout){
         return store->tryCheckout(sessionId,request);
     }
-    //format: BUY <customer_name> <ticket_name>
+    //format: BUY <customer_name> <ticket_ID>
     if(request.type==ClientMessageType::REQUEST_Buy){
         return store->confirmPurchase(sessionId,request);
     }
