@@ -352,7 +352,7 @@ class InputPersonalDataPage:public QWidget{
 
     QLabel* title=new QLabel(this);
     QLineEdit* inputField=new QLineEdit(this) ;
-    QLabel* errorMessage=new QLabel("The name can not be empty",this);
+    QLabel* errorMessage=new QLabel("The name you provided has been rejected. Try again.",this);
     QPushButton* confirmButton = new QPushButton("confirm",this);
     QPushButton* cancelButton= new QPushButton("Cancel",this);
 
@@ -499,12 +499,19 @@ signals:
     void printingFinished();
 };
 
+enum class PaymentProcessorState{
+    idle,
+    acceptingCoins,
+    awaitingFinalConfirmation
+};
+
 class PaymentProcessor:public QObject{
     Q_OBJECT
     CoinInventory localInventory{};
     CoinInventory transactionInventory{};
+    CoinInventory changeToGiveOut{};
     Cents ticketCost=0;
-
+    PaymentProcessorState currentState=PaymentProcessorState::idle;
 private:
 
     void outputCoins(CoinInventory coins){
@@ -523,7 +530,7 @@ public:
         }
     }
 
-    signals:
+signals:
 
     void localInventoryChanged(CoinInventory);
     void amountInsertedChanged(Cents newValue,bool isEnough);
@@ -531,7 +538,9 @@ public:
     void purchaseCompleted();
     void returningCoins(TransactionCancelationReason);
     void coinsReturned();
-
+    void canNotGiveOutChange();
+    void changeReady();
+    void errorWhenPreparingChange();
 public slots:
     void DEBUGCoinAdded(Cents cents){
         localInventory.addCoin(cents);
@@ -544,28 +553,46 @@ public slots:
     }
 
     void insertCoin(Cents coinVal){
-        transactionInventory.addCoin(coinVal);
-        emit amountInsertedChanged(transactionInventory.getTotalAmount(),transactionInventory.getTotalAmount()>=ticketCost);
+        if(currentState==PaymentProcessorState::acceptingCoins){
+            transactionInventory.addCoin(coinVal);
+            emit amountInsertedChanged(transactionInventory.getTotalAmount(),transactionInventory.getTotalAmount()>=ticketCost);
+        }else qFatal("coin inserted during wrong state");//todo
     }
 
-    void tryAcceptPurchase(){
-        Cents sumInserted=transactionInventory.getTotalAmount();
-        if(sumInserted<ticketCost){
-            cancelTransaction(TransactionCancelationReason::Error);
+    void prepareToAcceptPurchase(){
+        if(currentState!=PaymentProcessorState::acceptingCoins){
+            emit errorWhenPreparingChange();
         }else{
-            Cents changeValue=sumInserted-ticketCost;
-            CoinInventory fullInventory=localInventory+transactionInventory;
-            auto change=fullInventory.coinChange(changeValue);
-            if(!change){
-                cancelTransaction(TransactionCancelationReason::CouldNotGiveOutChange);
+            Cents sumInserted=transactionInventory.getTotalAmount();
+            if(sumInserted<ticketCost){
+                qWarning()<<"not enough money to afford the ticket";
+                emit canNotGiveOutChange();
             }else{
-                localInventory.moveInventoryFrom(transactionInventory); 
-                outputCoins(change.value());
-                localInventory.subtractInventory(change.value());
-
-                if(sumInserted!=0)emit localInventoryChanged(localInventory);
-                emit purchaseCompleted();
+                Cents changeValue=sumInserted-ticketCost;
+                CoinInventory fullInventory=localInventory+transactionInventory;
+                auto change=fullInventory.coinChange(changeValue);
+                if(!change){
+                    emit canNotGiveOutChange();
+                }else{
+                    changeToGiveOut=change.value();
+                    currentState=PaymentProcessorState::awaitingFinalConfirmation;
+                    emit changeReady();
+                }
             }
+        }
+    }
+
+    void finalizePurchase(){
+        if(currentState!=PaymentProcessorState::awaitingFinalConfirmation){
+            qFatal("finalizePurchase called when not awaitingFinalConfirmation");//todo
+        }else{
+            localInventory.moveInventoryFrom(transactionInventory); 
+            outputCoins(changeToGiveOut);
+            localInventory.subtractInventory(changeToGiveOut);
+            changeToGiveOut={};
+            currentState=PaymentProcessorState::idle;
+            emit localInventoryChanged(localInventory);
+            emit purchaseCompleted();
         }
     }
 
@@ -573,6 +600,7 @@ public slots:
         emit returningCoins(reason);
         outputCoins(transactionInventory);
         transactionInventory={};
+        currentState=PaymentProcessorState::idle;
         //abstraction, it would take time for real machine to spit out all the inserted coins back
         QTimer::singleShot(2000, this, [this] {
             emit coinsReturned();
@@ -581,7 +609,10 @@ public slots:
 
     void startTransaction(Cents cost){
         if(transactionInventory.getTotalAmount()!=0)qFatal("Multiple transactions at the same time");//A little hard-handed. Just a temporary solution
-        else ticketCost=cost;
+        else {
+            currentState=PaymentProcessorState::acceptingCoins;
+            ticketCost=cost;
+        }
     }
 };
 
@@ -646,13 +677,26 @@ Q_OBJECT
                 else unrecorevableError_todo("Get_ticket_list not OK");
                 break;
             case ClientMessageType::REQUEST_Start_checkout:
-                //todo
+                if(framedResponse.type==ServerMessageType::OK){
+                    emit checkOutStarted(parsing::unpackNumber<TicketId>(framedResponse.message));
+                }else unrecorevableError_todo("Start_checkout not OK");
                 break;
             case ClientMessageType::REQUEST_Buy:
-                //todo
+                if(framedResponse.type==ServerMessageType::OK){
+                    emit purchaseRecorded(parsing::unpackNumber<TicketId>(framedResponse.message));
+                }else unrecorevableError_todo("Buy not OK");
                 break;
             case ClientMessageType::REQUEST_Cancel_checkout:
-                //todo
+                if(framedResponse.type==ServerMessageType::OK){
+                    emit checkoutCanceled();
+                }else unrecorevableError_todo("Cancel_checkout not OK");
+                break;
+            case ClientMessageType::REQUEST_Validate_name:
+                if(framedResponse.type==ServerMessageType::OK){
+                    bool response = parsing::unpackNumber<quint8>(framedResponse.message);
+                    if(response==true)emit nameAccepted();
+                    else emit nameRejected();
+                }else unrecorevableError_todo("Validate_name not OK");
                 break;
             default:
                 unrecorevableError_todo("response to unknown request type");
@@ -668,11 +712,11 @@ Q_OBJECT
             if(buffer.size()<4)break;
             
             quint32 len=parsing::unpackNumber<quint32>(buffer);
-            quint32 totalLen=len+4;
             if(len>MAX_MESSAGE_SIZE){
                 unrecorevableError_todo("too long message from server");
                 return;
             } 
+            quint32 totalLen=len+sizeof(quint32);
             if(buffer.size()<totalLen)break;
             QByteArray rawMessage = buffer.mid(4,len);
             buffer.remove(0,totalLen);
@@ -706,13 +750,32 @@ public slots:
     }
     void requestTicketList(){
         socket.write(frameRequest({ClientMessageType::REQUEST_Get_ticket_list}));
-
+    }
+    void startTransaction(TicketId id){
+        socket.write(frameRequest({ClientMessageType::REQUEST_Start_checkout,parsing::packNumber<TicketId>(id)}));
+    }
+    void cancelTransaction(){
+        socket.write(frameRequest({ClientMessageType::REQUEST_Cancel_checkout}));
+    };
+    void validateName(QByteArray name){
+        socket.write(frameRequest({ClientMessageType::REQUEST_Validate_name,parsing::pack8BitPrefixedByteArray(name)}));
+    }
+    void finalizePurchase(QByteArray name,TicketId id){
+        QByteArray message="";
+        message.append(parsing::pack8BitPrefixedByteArray(name));
+        message.append(parsing::packNumber<TicketId>(id));
+        socket.write(frameRequest({ClientMessageType::REQUEST_Buy,message}));
     }
 signals:
+    void checkoutCanceled();
+    void purchaseRecorded(TicketId);
+    void checkOutStarted(TicketId);
     void failedToConnectToServer();
     void versionValidated();
     void serverReady();
     void ticketListUpdated(std::vector<TicketData>);
+    void nameAccepted();
+    void nameRejected();
 };
 
 class SessionController:public QObject{
@@ -723,11 +786,13 @@ private:
     TicketData currentTicket;
     PaymentProcessor* paymentProcessor;
     ServerConnection* serverConnection; 
+    QByteArray buyerName;
     bool serverInitiated=false;
 
     //Ultimatly this will be a server call, so for now this is a bare-bones placeholder.
     bool verifyName(QString name){
         if(name.isEmpty())return false;
+        buyerName = name.toUtf8();
         return true;
     }
 
@@ -743,6 +808,9 @@ private:
 
 
 public:
+    const TicketData& getCurrentTicket() const{
+        return currentTicket;
+    }
 
     const std::vector<TicketData>& getAvailableTickets() const {
         return availableTickets;
@@ -755,13 +823,21 @@ public:
     SessionController(QObject* parent=nullptr):QObject(parent){
         paymentProcessor= new PaymentProcessor(this);
         serverConnection= new ServerConnection(this);
-        connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,this,&SessionController::purchaseCompleted);
         connect(paymentProcessor,&PaymentProcessor::amountInsertedChanged,this,&SessionController::amountInsertedChanged);
         connect(paymentProcessor,&PaymentProcessor::localInventoryChanged,this,&SessionController::localInventoryChanged);
-        connect(paymentProcessor,&PaymentProcessor::returningCoins,this,&SessionController::returningCoins);
-        connect(paymentProcessor,&PaymentProcessor::coinsReturned,this,&SessionController::coinsReturned);
+        connect(paymentProcessor,&PaymentProcessor::returningCoins,       this,&SessionController::returningCoins);
+        connect(paymentProcessor,&PaymentProcessor::coinsReturned,        this,&SessionController::coinsReturned);
 
+        connect(paymentProcessor,&PaymentProcessor::canNotGiveOutChange,     this,&SessionController::cannotGiveOutChange);
+        connect(paymentProcessor,&PaymentProcessor::errorWhenPreparingChange,this,&SessionController::errorWhenPreparingChange);
+        connect(paymentProcessor,&PaymentProcessor::changeReady,             this,&SessionController::changeReady);
+        
+        connect(serverConnection,&ServerConnection::checkOutStarted, this,&SessionController::serverAcceptedTicket);
+        connect(serverConnection,&ServerConnection::purchaseRecorded,paymentProcessor,&PaymentProcessor::finalizePurchase);
+        connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,this,&SessionController::purchaseCompleted);
         connect(serverConnection,&ServerConnection::serverReady,serverConnection,&ServerConnection::validateVersion);
+        connect(serverConnection,&ServerConnection::nameAccepted,this,&SessionController::nameAccepted);
+        connect(serverConnection,&ServerConnection::nameRejected,this,&SessionController::nameRejected);
 
         //after version has been validated server should send updates to the ticketList on it's own (that part is not hooked up yet), but we need the initial list.
         connect(serverConnection,&ServerConnection::versionValidated,serverConnection,&ServerConnection::requestTicketList);
@@ -816,10 +892,6 @@ public slots:
         emit sessionReady();
     }
 
-    void cancelTransaction(){
-        paymentProcessor->cancelTransaction(TransactionCancelationReason::UserRequested);
-    }
-
     void tryCoin(QString coin){
         if(CoinInventory::isValidDenomination(coin)==false)emit invalidCoinInserted();
         else{
@@ -828,7 +900,7 @@ public slots:
     }
 
     void tryAcceptPurchase(){
-        paymentProcessor->tryAcceptPurchase();
+        paymentProcessor->prepareToAcceptPurchase();
     }
 
     void startTransaction(){
@@ -837,28 +909,50 @@ public slots:
 
     void ticketPicked(TicketData data){
         currentTicket=data;
-        //todo check with server if ticket is still valid
-        emit ticketChoiceAccepted(currentTicket);
+        serverConnection->startTransaction(data.Id);
     }
 
     void validateBuyerName(QString name){
-        if(verifyName(name)==false){
-            emit nameRejected();
-        }else{
-            emit nameAccepted(currentTicket);
-        }
+        buyerName=name.toUtf8();
+        serverConnection->validateName(name.toUtf8());
     }
 
     void onUIReady(){
         serverConnection->connectToServer();
     }
 
+    void serverAcceptedTicket(TicketId id){
+        if(currentTicket.Id==id)emit ticketChoiceAccepted(currentTicket);
+        else{
+            //todo
+        }
+    }
+
+    void userCanceledTransaction(){
+        serverConnection->cancelTransaction();
+        paymentProcessor->cancelTransaction(TransactionCancelationReason::UserRequested);
+    }
+
+    void cannotGiveOutChange(){
+        serverConnection->cancelTransaction();
+        paymentProcessor->cancelTransaction(TransactionCancelationReason::CouldNotGiveOutChange);
+    }
+
+    void errorWhenPreparingChange(){
+        serverConnection->cancelTransaction();
+        paymentProcessor->cancelTransaction(TransactionCancelationReason::Error);
+    }
+
+    void changeReady(){
+        serverConnection->finalizePurchase(buyerName,currentTicket.Id);
+    }
 
 signals:
+    void restartStatus();
     void ticketListChanged(std::vector<TicketData>);
     void localInventoryChanged(CoinInventory);
     void unknownDBId();
-    void nameAccepted(TicketData);
+    void nameAccepted();
     void nameRejected();
     void amountInsertedChanged(Cents,bool isEnough);
     void sessionReady();
@@ -895,6 +989,7 @@ public:
         
         session=new SessionController(this);
         connect(session,&SessionController::sessionReady,this,&MainWindow::goToMain);
+        connect(session,&SessionController::restartStatus,this,&MainWindow::goToMain);
 
         //stack.addWidget() passes ownership to the stack immidietly after the 'new'
         loginPage=new LoginPage;
@@ -907,14 +1002,14 @@ public:
         mainPage=new MainPage;
         stack.addWidget(mainPage);
         connect(mainPage,&MainPage::languagesOption,this,&MainWindow::goToLanguages);
-        connect(mainPage,&MainPage::purchaseOption,this,&MainWindow::goToChooseTicketPage);
+        connect(mainPage,&MainPage::purchaseOption, this,&MainWindow::goToChooseTicketPage);
 
         
         debugEditCoins=new DebugEditCoins;
         stack.addWidget(debugEditCoins);
-        connect(mainPage,&MainPage::debugEditCoinsOption,this,&MainWindow::goToDebugEditCoins);
+        connect(mainPage,&MainPage::debugEditCoinsOption,   this,&MainWindow::goToDebugEditCoins);
         connect(debugEditCoins,&DebugEditCoins::backPressed,this,&MainWindow::goToMain);
-        connect(debugEditCoins,&DebugEditCoins::DEBUGcoinAdded,session,&SessionController::DEBUGCoinAdded);
+        connect(debugEditCoins,&DebugEditCoins::DEBUGcoinAdded,  session,&SessionController::DEBUGCoinAdded);
         connect(debugEditCoins,&DebugEditCoins::DEBUGcoinRemoved,session,&SessionController::DEBUGCoinRemoved);
         connect(session,&SessionController::localInventoryChanged,debugEditCoins,&DebugEditCoins::setAmountValues);
 
@@ -922,19 +1017,19 @@ public:
         languagesPage=new LanguagesPage;
         stack.addWidget(languagesPage);
         connect(languagesPage,&LanguagesPage::languagePicked,session,&SessionController::languageChanged);
-        connect(languagesPage,&LanguagesPage::backPressed,this,&MainWindow::goToMain);
+        connect(languagesPage,&LanguagesPage::backPressed,   this,&MainWindow::goToMain);
 
 
         chooseTicketPage=new ChooseTicketPage();
         stack.addWidget(chooseTicketPage);
-        connect(chooseTicketPage,&ChooseTicketPage::backPressed,this,&MainWindow::goToMain);
+        connect(chooseTicketPage,&ChooseTicketPage::backPressed ,this,&MainWindow::goToMain);
         connect(chooseTicketPage,&ChooseTicketPage::ticketPicked,session,&SessionController::ticketPicked);
         connect(session,&SessionController::ticketChoiceAccepted,this,&MainWindow::goToInputPersonalDataPage);
 
 
         inputPersonalDataPage=new InputPersonalDataPage();
         stack.addWidget(inputPersonalDataPage);
-        connect(inputPersonalDataPage,&InputPersonalDataPage::cancelPressed,this,&MainWindow::goToMain);
+        connect(inputPersonalDataPage,&InputPersonalDataPage::cancelPressed        ,session,&SessionController::userCanceledTransaction);
         connect(inputPersonalDataPage,&InputPersonalDataPage::personalDataSubmitted,session,&SessionController::validateBuyerName);
         connect(session,&SessionController::nameRejected,inputPersonalDataPage,&InputPersonalDataPage::submittedNameNotAccepted);
         connect(session,&SessionController::nameAccepted,this,&MainWindow::goToTakeCoinsPage);
@@ -942,10 +1037,10 @@ public:
 
         paymentPage=new PaymentPage();
         stack.addWidget(paymentPage);
-        connect(paymentPage,&PaymentPage::cancelPressed,session,&SessionController::cancelTransaction);
+        connect(paymentPage,&PaymentPage::cancelPressed,       session,&SessionController::userCanceledTransaction);
         connect(paymentPage,&PaymentPage::denominationInserted,session,&SessionController::tryCoin);
-        connect(paymentPage,&PaymentPage::confirmPressed,session,&SessionController::tryAcceptPurchase);
-        connect(session,&SessionController::invalidCoinInserted,paymentPage,&PaymentPage::unknownCoin);
+        connect(paymentPage,&PaymentPage::confirmPressed,      session,&SessionController::tryAcceptPurchase);
+        connect(session,&SessionController::invalidCoinInserted,  paymentPage,&PaymentPage::unknownCoin);
         connect(session,&SessionController::amountInsertedChanged,paymentPage,&PaymentPage::amountInsertedChanged);
         connect(session,&SessionController::purchaseCompleted,this,&MainWindow::goToPrintingPage);
 
@@ -953,7 +1048,7 @@ public:
         returningMoneyPage=new ReturningMoneyPage();
         stack.addWidget(returningMoneyPage);
         connect(session,&SessionController::returningCoins,this,&MainWindow::goToReturningMoneyPage);
-        connect(session,&SessionController::coinsReturned,this,&MainWindow::goToMain);
+        connect(session,&SessionController::coinsReturned, this,&MainWindow::goToMain);
 
         printingPage=new PrintingPage;
         stack.addWidget(printingPage);
@@ -989,8 +1084,8 @@ public slots:
         stack.setCurrentWidget(printingPage);
     }
 
-    void goToTakeCoinsPage(const TicketData& data){
-        paymentPage->reinitialize(data);
+    void goToTakeCoinsPage(){
+        paymentPage->reinitialize(session->getCurrentTicket());
         session->startTransaction();
         stack.setCurrentWidget(paymentPage);
     }

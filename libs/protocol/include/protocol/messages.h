@@ -63,10 +63,17 @@ static_assert((quint16)ServerMessageType::OK_END_RESERVED<0x5000);
 enum class ClientMessageType:quint16{
     Invalid=0x0000,
     REQUEST_BEGIN_RESERVED,
+    //takes <request><protocolVersionString>, returns <response><request>. Protocol version is not length prefixed.
     REQUEST_Version_validation,
+    //takes <request>, returns <response><request><#OfTickets(8bit)><<Id(TicketId)><LenPrefTicketName><cost(Cents)><isAvalible(bool)>><...>
     REQUEST_Get_ticket_list,
+    //takes <request><id(TicketId)>, returns <response><request><id(TicketId)>
     REQUEST_Start_checkout,
+    //takes <request><LenPrefCustomerName>, returns <response(Y/N)><request>
+    REQUEST_Validate_name,
+    //takes <request><LenPrefCustomerName><id(TicketId)>, returns <response><request><id(TicketId)>
     REQUEST_Buy,
+    //takes <request>, returns <response><request>
     REQUEST_Cancel_checkout,
     REQUEST_END_RESERVED
 };

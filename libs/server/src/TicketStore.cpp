@@ -109,6 +109,19 @@ bool TicketStore::validateName(const QByteArray& buyerName){
     return true;
 }
 
+ServerMessage TicketStore::handleNameValidationRequest(const ClientMessage& request){
+    QByteArray buyerName;
+    try{
+        quint32 offset=0;
+        buyerName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
+        if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
+    }catch(std::exception& e){
+        return {ServerMessageType::ERR_Parsing_error};
+    }
+    if(validateName(buyerName))return {ServerMessageType::OK,parsing::packNumber<quint8>(true)};
+    else return {ServerMessageType::OK,parsing::packNumber<quint8>(false)};
+}
+
 ServerMessage TicketStore::confirmPurchase(SessionId sessionId,const ClientMessage& request){
 
     QByteArray buyerName;

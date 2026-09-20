@@ -27,6 +27,8 @@ public:
 
     bool validateName(const QByteArray& buyerName);
 
+    ServerMessage handleNameValidationRequest(const ClientMessage& request);
+
     ServerMessage confirmPurchase(SessionId sessionId,const ClientMessage& request);
 };
 #endif

@@ -48,6 +48,9 @@ ServerMessage ClientSession::craftResponse(const ClientMessage& request){
     if(request.type==ClientMessageType::REQUEST_Buy){
         return store->confirmPurchase(sessionId,request);
     }
+    if(request.type==ClientMessageType::REQUEST_Validate_name){
+        return store->handleNameValidationRequest(request);
+    }
     if(request.type==ClientMessageType::REQUEST_Cancel_checkout){
         if(request.message.isEmpty()==false)return {ServerMessageType::ERR_Incorrect_argument_count};
         else return store->tryCancelCheckout(sessionId);
