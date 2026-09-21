@@ -74,7 +74,7 @@ ServerMessage TicketStore::tryCheckout(SessionId sessionId,const ClientMessage& 
     
     TicketId ticketId;
     try{
-        quint32 offset=0;
+        qsizetype offset=0;
         ticketId=parsing::unpackNumber<TicketId>(request.message,offset);
         if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
     }catch(std::exception& e){
@@ -112,7 +112,7 @@ bool TicketStore::validateName(const QByteArray& buyerName){
 ServerMessage TicketStore::handleNameValidationRequest(const ClientMessage& request){
     QByteArray buyerName;
     try{
-        quint32 offset=0;
+        qsizetype offset=0;
         buyerName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
         if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
     }catch(std::exception& e){
@@ -127,7 +127,7 @@ ServerMessage TicketStore::confirmPurchase(SessionId sessionId,const ClientMessa
     QByteArray buyerName;
     TicketId ticketId;
     try{
-        quint32 offset=0;
+        qsizetype offset=0;
         buyerName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
         ticketId=parsing::unpackNumber<TicketId>(request.message,offset);
         if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};

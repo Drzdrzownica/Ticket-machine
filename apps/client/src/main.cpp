@@ -1,3 +1,4 @@
+
 #include <QCoreApplication>
 #include <QApplication>
 #include <QWidget>
@@ -645,7 +646,7 @@ Q_OBJECT
     //note to consider error-handeling, but it's fine to leave it for later
     void handleRawTicketListData(const QByteArray& data){
         std::vector<TicketData> result;
-        quint32 offset=0;
+        qsizetype offset=0;
         quint8 numberOfTickets = parsing::unpackNumber<quint8>(data,offset);
         for(int i=0;i<numberOfTickets;i++){
             TicketId Id = parsing::unpackNumber<TicketId>(data,offset);

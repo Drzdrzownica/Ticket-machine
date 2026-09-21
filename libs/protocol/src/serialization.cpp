@@ -8,7 +8,7 @@ QByteArray parsing::pack8BitPrefixedByteArray(const QByteArray& array){
     return result;
 }
 
-QByteArray parsing::unpack8BitPrefixedByteArray(const QByteArray& parameters,quint32& offset){
+QByteArray parsing::unpack8BitPrefixedByteArray(const QByteArray& parameters,qsizetype& offset){
     QByteArray answer;
     if(parameters.size()<=offset)throw std::out_of_range("Offset_larger_than_parameters_size");
     quint8 len=parameters[offset++];
@@ -18,19 +18,17 @@ QByteArray parsing::unpack8BitPrefixedByteArray(const QByteArray& parameters,qui
     return result;
 }
 
-ClientMessage parsing::unpackClientMessage(const QByteArray& data){
-    if(data.size()<2)throw std::invalid_argument("Not_enough_bytes");
-    return{
-        static_cast<ClientMessageType>(parsing::unpackNumber<quint16>(data)),
-        data.mid(2)
-    };
+ClientMessage parsing::unpackClientMessage(const QByteArray& rawData){
+    qsizetype offset=0;
+    ClientMessageType clientMessage = parsing::unpackEnum<ClientMessageType>(rawData,offset);
+    QByteArray data=rawData.mid(offset);
+    return{clientMessage,data};
 }
 
-ServerResponse parsing::unpackServerResponse(const QByteArray& data){
-    if(data.size()<4)throw std::invalid_argument("Not_enough_bytes");
-    return{
-        static_cast<ServerMessageType>(parsing::unpackNumber<quint16>(data)),
-        static_cast<ClientMessageType>(parsing::unpackNumber<quint16>(data.mid(2))),
-        data.mid(4)
-    };
+ServerResponse parsing::unpackServerResponse(const QByteArray& rawData){
+    qsizetype offset=0;
+    ServerMessageType message=parsing::unpackEnum<ServerMessageType>(rawData,offset);
+    ClientMessageType inResponseTo = parsing::unpackEnum<ClientMessageType>(rawData,offset);
+    QByteArray data=rawData.mid(offset);
+    return {message,inResponseTo,data};
 }
