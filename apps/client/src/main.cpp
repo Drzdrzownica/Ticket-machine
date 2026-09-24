@@ -140,10 +140,20 @@ enum class Language{
     English
 };
 
-enum TransactionCancelationReason{
+enum class TransactionCancelationReason{
     CouldNotGiveOutChange,
     UserRequested,
     Error
+};
+
+enum class ClientShutdownReason:quint64{
+    Version_validation_mismatch,
+    Version_validation_issue,
+    Ticket_list_parsing_issue,
+    Ticket_list_retrival_issue,
+    Generic_server_requested,
+    Response_parsing_issue,
+    Transaction_state_violation
 };
 
 struct TicketData{
@@ -151,6 +161,21 @@ struct TicketData{
     QString name;
     Cents price; //same as above
     bool isAvailable=true;
+};
+
+class ErrorStatePage: public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+    QLabel* information=new QLabel("Something went seriously wrong contact the administrator",this);
+    QLabel* details=new QLabel("This page has not been initialized with a shutdown reason",this);
+public:
+    ErrorStatePage():layout(this){
+        layout.addWidget(information);
+        layout.addWidget(details);
+    }
+    void reinitialize(ClientShutdownReason reason){
+        details->setText("Shutdown reason code "+QString::number(static_cast<std::underlying_type_t<ClientShutdownReason>>(reason)));
+    }
 };
 
 class LoginPage: public QWidget{
@@ -503,7 +528,8 @@ signals:
 enum class PaymentProcessorState{
     idle,
     acceptingCoins,
-    awaitingFinalConfirmation
+    awaitingFinalConfirmation,
+    disabled //awaiting reboot
 };
 
 class PaymentProcessor:public QObject{
@@ -514,6 +540,13 @@ class PaymentProcessor:public QObject{
     Cents ticketCost=0;
     PaymentProcessorState currentState=PaymentProcessorState::idle;
 private:
+
+    void resetTransaction(){
+        changeToGiveOut={};
+        transactionInventory={};
+        ticketCost = 0;
+        currentState=PaymentProcessorState::idle;
+    }
 
     void outputCoins(CoinInventory coins){
     for(const auto& [denomination,amount]:coins.getInventoryList()){
@@ -542,7 +575,15 @@ signals:
     void canNotGiveOutChange();
     void changeReady();
     void errorWhenPreparingChange();
+    void requestedShutdown(ClientShutdownReason);
 public slots:
+
+    void panicEjectMoney(){
+        outputCoins(transactionInventory);
+        resetTransaction();
+        currentState=PaymentProcessorState::disabled;
+    }
+
     void DEBUGCoinAdded(Cents cents){
         localInventory.addCoin(cents);
         emit localInventoryChanged(localInventory);
@@ -557,7 +598,7 @@ public slots:
         if(currentState==PaymentProcessorState::acceptingCoins){
             transactionInventory.addCoin(coinVal);
             emit amountInsertedChanged(transactionInventory.getTotalAmount(),transactionInventory.getTotalAmount()>=ticketCost);
-        }else qFatal("coin inserted during wrong state");//todo
+        }else emit requestedShutdown(ClientShutdownReason::Transaction_state_violation);
     }
 
     void prepareToAcceptPurchase(){
@@ -585,13 +626,12 @@ public slots:
 
     void finalizePurchase(){
         if(currentState!=PaymentProcessorState::awaitingFinalConfirmation){
-            qFatal("finalizePurchase called when not awaitingFinalConfirmation");//todo
+            emit requestedShutdown(ClientShutdownReason::Transaction_state_violation);
         }else{
             localInventory.moveInventoryFrom(transactionInventory); 
             outputCoins(changeToGiveOut);
             localInventory.subtractInventory(changeToGiveOut);
-            changeToGiveOut={};
-            currentState=PaymentProcessorState::idle;
+            resetTransaction();
             emit localInventoryChanged(localInventory);
             emit purchaseCompleted();
         }
@@ -600,8 +640,7 @@ public slots:
     void cancelTransaction(TransactionCancelationReason reason){
         emit returningCoins(reason);
         outputCoins(transactionInventory);
-        transactionInventory={};
-        currentState=PaymentProcessorState::idle;
+        resetTransaction();
         //abstraction, it would take time for real machine to spit out all the inserted coins back
         QTimer::singleShot(2000, this, [this] {
             emit coinsReturned();
@@ -609,7 +648,7 @@ public slots:
     }
 
     void startTransaction(Cents cost){
-        if(transactionInventory.getTotalAmount()!=0)qFatal("Multiple transactions at the same time");//A little hard-handed. Just a temporary solution
+        if(currentState != PaymentProcessorState::idle)emit requestedShutdown(ClientShutdownReason::Transaction_state_violation);
         else {
             currentState=PaymentProcessorState::acceptingCoins;
             ticketCost=cost;
@@ -632,12 +671,12 @@ Q_OBJECT
 
     QByteArray frameRequest(const ClientMessage& message){
         QByteArray result;
-        quint32 size=message.message.size()+sizeof(message.type);
+        PacketLengthPrefix size=message.message.size()+sizeof(message.type);
 
         result.reserve(size+sizeof(size));
         
         result.append(parsing::packNumber(size));
-        result.append(parsing::packNumber((quint16)message.type));
+        result.append(parsing::packNumber(static_cast<std::underlying_type_t<ClientMessageType>>(message.type)));
         result.append(message.message);
 
         return result;
@@ -645,37 +684,77 @@ Q_OBJECT
 
     //note to consider error-handeling, but it's fine to leave it for later
     void handleRawTicketListData(const QByteArray& data){
-        std::vector<TicketData> result;
-        qsizetype offset=0;
-        quint8 numberOfTickets = parsing::unpackNumber<quint8>(data,offset);
-        for(int i=0;i<numberOfTickets;i++){
-            TicketId Id = parsing::unpackNumber<TicketId>(data,offset);
-            QByteArray name=parsing::unpack8BitPrefixedByteArray(data,offset);
-            Cents cost = parsing::unpackNumber<Cents>(data,offset);
-            bool isAvailable=parsing::unpackNumber<quint8>(data,offset);
-            result.push_back(TicketData{Id,name,cost,isAvailable});
+        try{
+            std::vector<TicketData> result;
+            qsizetype offset=0;
+            quint8 numberOfTickets = parsing::unpackNumber<quint8>(data,offset);
+            for(int i=0;i<numberOfTickets;i++){
+                TicketId Id      = parsing::unpackNumber<TicketId>(data,offset);
+                QByteArray name  = parsing::unpack8BitPrefixedByteArray(data,offset);
+                Cents cost       = parsing::unpackNumber<Cents>(data,offset);
+                bool isAvailable = parsing::unpackNumber<quint8>(data,offset);
+                result.push_back(TicketData{Id,name,cost,isAvailable});
+            }
+            emit ticketListUpdated(result);
+        }catch(...){
+            emit requestedClientShutdown(ClientShutdownReason::Ticket_list_parsing_issue);
         }
-        emit ticketListUpdated(result);
     };
 
-    void handleServerMessage(const QByteArray& data){
-        ServerResponse framedResponse=parsing::unpackServerResponse(data);
+    void handleVersionValidationResponse(const ServerResponse& response){
+        switch (response.type)
+        {
+        case ServerMessageType::OK:
+            emit versionValidated();
+            break;
+        case ServerMessageType::CLIENT_WARNING_Version_already_validated:
+            qWarning()<<"Version already validated";
+            break;
+        case ServerMessageType::CRIT_CLIENT_ERR_Version_mismatch:
+            emit requestedClientShutdown(ClientShutdownReason::Version_validation_mismatch);
+            break;
+        default:
+            emit requestedClientShutdown(ClientShutdownReason::Version_validation_issue);
+            break;
+        }
+    }
 
-        //the following two checks are placeholders. Their bodies are to be eventually replaced.
-        if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ServerCrit)){
-            unrecorevableError_todo("Something went __seriously__ wrong with the server and it had to shut down");
-        }else if(serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ClientCrit)){
-            unrecorevableError_todo("Something went __seriously__ wrong and server requested a shut down. Contact the administrator");
+    void handleGetTicketListResponse(const ServerResponse& response){
+        switch (response.type)
+        {
+        case ServerMessageType::OK:
+            handleRawTicketListData(response.message);
+            break;
+        default:
+            emit requestedClientShutdown(ClientShutdownReason::Ticket_list_retrival_issue);
+            break;
+        }
+    }
+
+    void handleServerMessage(const QByteArray& data){
+        ServerResponse framedResponse;
+        try{
+            framedResponse=parsing::unpackServerResponse(data);
+        }catch(...){
+            emit requestedClientShutdown(ClientShutdownReason::Response_parsing_issue);
+            return;
+        }
+
+        logServerResponse(framedResponse);
+
+        if( serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ServerCrit) || 
+            serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ClientCrit)){
+            //I might eventually replace with a function call that behaves slightly differently for each case (I haven't decided yet), but ultimately we will call the same function so it's not a priority.
+            emit requestedClientShutdown(ClientShutdownReason::Generic_server_requested);
+            return;
         }
         
         switch (framedResponse.inResponseTo){
             case ClientMessageType::REQUEST_Version_validation:
-                if(framedResponse.type==ServerMessageType::OK)emit versionValidated();
-                else unrecorevableError_todo("Version_validation not OK");
+                handleVersionValidationResponse(framedResponse);
                 break;
-                case ClientMessageType::REQUEST_Get_ticket_list:
-                if(framedResponse.type==ServerMessageType::OK)handleRawTicketListData(framedResponse.message);
-                else unrecorevableError_todo("Get_ticket_list not OK");
+            case ClientMessageType::REQUEST_Get_ticket_list:
+                handleGetTicketListResponse(framedResponse);
                 break;
             case ClientMessageType::REQUEST_Start_checkout:
                 if(framedResponse.type==ServerMessageType::OK){
@@ -710,25 +789,57 @@ Q_OBJECT
             unrecorevableError_todo("server flooded machine");
         }
         while(true){
-            if(buffer.size()<4)break;
+            if(buffer.size()<sizeof(PacketLengthPrefix))break;
             
-            quint32 len=parsing::unpackNumber<quint32>(buffer);
+            quint64 len=parsing::unpackNumber<PacketLengthPrefix>(buffer);
             if(len>MAX_MESSAGE_SIZE){
                 unrecorevableError_todo("too long message from server");
                 return;
             } 
-            quint32 totalLen=len+sizeof(quint32);
+            quint64 totalLen=len+sizeof(PacketLengthPrefix);
             if(buffer.size()<totalLen)break;
-            QByteArray rawMessage = buffer.mid(4,len);
+            QByteArray rawMessage = buffer.mid(sizeof(PacketLengthPrefix),len);
             buffer.remove(0,totalLen);
             
-            if(rawMessage.size()<4){
-                unrecorevableError_todo("server message too short");
-            }else{
-                handleServerMessage(rawMessage);
-            }
+            handleServerMessage(rawMessage);
         }
 
+    }
+
+    //todo: write it to a file, but for now I prefer it in console
+    void logClientMessage(const ClientMessage &message){
+        qInfo()
+            <<"out"
+            <<"| code: "<<static_cast<std::underlying_type_t<ClientMessageType>>(message.type)
+            <<"| payload length:"<<message.message.size()
+            #ifdef DEBUG_LOG
+            <<"| contents:"<<message.message
+            #endif
+            ;
+    }
+    void logServerResponse(const ServerResponse& response){
+        QByteArray category;
+        if(serverMessageCheckCategory(response.type,ServerMessageCategory::Ok))category = "OK";
+        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientWarning))category = "WARN";
+        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::Error))category = "ERR";
+        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::ServerCrit))category = "SERVER_CRIT";
+        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientCrit))category = "CLIENT_CRIT";
+        else category = "UNRECOGNIZED";
+        qInfo()
+            <<"in" 
+            <<"| re: "<<static_cast<std::underlying_type_t<ClientMessageType>>(response.inResponseTo)
+            <<"| code: "<< static_cast<std::underlying_type_t<ServerMessageType>>(response.type) 
+            <<"| category:"<< category
+            <<"| payload length:"<<response.message.size()
+            #ifdef DEBUG_LOG
+            <<"| contents:"<< response.message
+            #endif
+            ;
+    }
+
+    void sendRequest(const ClientMessage &message){
+        logClientMessage(message);
+        socket.write(frameRequest(message));
     }
 
 public:
@@ -739,7 +850,7 @@ public:
 
 public slots:
     void validateVersion(){
-        socket.write(frameRequest({ClientMessageType::REQUEST_Version_validation,protocolVersion}));
+        sendRequest({ClientMessageType::REQUEST_Version_validation,protocolVersion});
     }
     void connectToServer(){
         socket.connectToHost("127.0.0.1", 12345);
@@ -750,24 +861,29 @@ public slots:
         }
     }
     void requestTicketList(){
-        socket.write(frameRequest({ClientMessageType::REQUEST_Get_ticket_list}));
+
+        sendRequest({ClientMessageType::REQUEST_Get_ticket_list});
     }
     void startTransaction(TicketId id){
-        socket.write(frameRequest({ClientMessageType::REQUEST_Start_checkout,parsing::packNumber<TicketId>(id)}));
+        sendRequest({ClientMessageType::REQUEST_Start_checkout,parsing::packNumber<TicketId>(id)});
     }
     void cancelTransaction(){
-        socket.write(frameRequest({ClientMessageType::REQUEST_Cancel_checkout}));
+        sendRequest({ClientMessageType::REQUEST_Cancel_checkout});
     };
     void validateName(QByteArray name){
-        socket.write(frameRequest({ClientMessageType::REQUEST_Validate_name,parsing::pack8BitPrefixedByteArray(name)}));
+        sendRequest({ClientMessageType::REQUEST_Validate_name,parsing::pack8BitPrefixedByteArray(name)});
     }
     void finalizePurchase(QByteArray name,TicketId id){
         QByteArray message="";
         message.append(parsing::pack8BitPrefixedByteArray(name));
         message.append(parsing::packNumber<TicketId>(id));
-        socket.write(frameRequest({ClientMessageType::REQUEST_Buy,message}));
+        sendRequest({ClientMessageType::REQUEST_Buy,message});
+    }
+    void disconnectSocket(){
+        socket.disconnectFromHost();
     }
 signals:
+    void requestedClientShutdown(ClientShutdownReason);
     void checkoutCanceled();
     void purchaseRecorded(TicketId);
     void checkOutStarted(TicketId);
@@ -788,14 +904,7 @@ private:
     PaymentProcessor* paymentProcessor;
     ServerConnection* serverConnection; 
     QByteArray buyerName;
-    bool serverInitiated=false;
-
-    //Ultimatly this will be a server call, so for now this is a bare-bones placeholder.
-    bool verifyName(QString name){
-        if(name.isEmpty())return false;
-        buyerName = name.toUtf8();
-        return true;
-    }
+    bool initialServerSyncComplete=false;
 
     //placeholder
     CoinInventory getLocalCoinInventory(QString dbId){
@@ -839,6 +948,8 @@ public:
         connect(serverConnection,&ServerConnection::serverReady,serverConnection,&ServerConnection::validateVersion);
         connect(serverConnection,&ServerConnection::nameAccepted,this,&SessionController::nameAccepted);
         connect(serverConnection,&ServerConnection::nameRejected,this,&SessionController::nameRejected);
+        connect(serverConnection,&ServerConnection::requestedClientShutdown,this,&SessionController::prepareShutdown);
+        connect(paymentProcessor,&PaymentProcessor::requestedShutdown,this,&SessionController::prepareShutdown);
 
         //after version has been validated server should send updates to the ticketList on it's own (that part is not hooked up yet), but we need the initial list.
         connect(serverConnection,&ServerConnection::versionValidated,serverConnection,&ServerConnection::requestTicketList);
@@ -856,11 +967,17 @@ public:
 public slots:
     void updateTicketList(std::vector<TicketData> list){
         availableTickets=list;
-        if(serverInitiated)emit ticketListChanged(availableTickets);
+        if(initialServerSyncComplete)emit ticketListChanged(availableTickets);
         else{
-            serverInitiated=true;
+            initialServerSyncComplete=true;
             emit serverReady();
         }
+    }
+
+    void prepareShutdown(ClientShutdownReason reason){
+        paymentProcessor->panicEjectMoney();
+        serverConnection->disconnectSocket();
+        emit paincShutdown(reason);
     }
     
     void DEBUGCoinAdded(Cents coin){
@@ -949,6 +1066,7 @@ public slots:
     }
 
 signals:
+    void paincShutdown(ClientShutdownReason);
     void restartStatus();
     void ticketListChanged(std::vector<TicketData>);
     void localInventoryChanged(CoinInventory);
@@ -973,6 +1091,7 @@ class MainWindow:public QWidget{
     QStackedWidget stack;
 
     LoginPage* loginPage;
+    ErrorStatePage* errorStatePage;
     MainPage* mainPage;
     DebugEditCoins* debugEditCoins;
     LanguagesPage* languagesPage;
@@ -998,6 +1117,10 @@ public:
         connect(loginPage,&LoginPage::dataBaseIDProvided,session,&SessionController::dbIdProvided);
         connect(session,&SessionController::unknownDBId,loginPage,&LoginPage::dbIdRejected);
         connect(session,&SessionController::serverReady,loginPage,&LoginPage::allowLogin);
+
+        errorStatePage=new ErrorStatePage;
+        stack.addWidget(errorStatePage);
+        connect(session,&SessionController::paincShutdown,this,&MainWindow::goToErrorStatePage);
 
 
         mainPage=new MainPage;
@@ -1065,6 +1188,11 @@ public slots:
     //conceptually we'll call reinitialize on all of them, while also passing the current language, but now it's not necessary.
     void goToMain(){
         stack.setCurrentWidget(mainPage);
+    }
+
+    void goToErrorStatePage(ClientShutdownReason reason){
+        errorStatePage->reinitialize(reason);
+        stack.setCurrentWidget(errorStatePage);
     }
 
     void goToReturningMoneyPage(TransactionCancelationReason reason){

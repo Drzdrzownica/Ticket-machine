@@ -60,7 +60,7 @@ ServerMessage ClientSession::craftResponse(const ClientMessage& request){
 
 QByteArray ClientSession::frameResponse(const ServerMessage& response,const ClientMessage& request){
     QByteArray answer;
-    quint32 size=response.message.size()+sizeof(response.type)+sizeof(request.type);
+    PacketLengthPrefix size=response.message.size()+sizeof(response.type)+sizeof(request.type);
 
     answer.reserve(size+sizeof(size));
     
@@ -104,6 +104,23 @@ void ClientSession::fail(const ServerMessage& error,const ClientMessage& request
     socket->disconnectFromHost();
 }
 
+//temporarly to console, ultimatly to file
+void ClientSession::logExchange(const ClientMessage& request,const ServerMessage& response){
+        qInfo()
+            <<"Session Id:"<<sessionId
+            <<"| request code: "<< quint64(request.type)
+            <<"| request size: "<< request.message.size()
+            #ifdef DEBUG_LOG
+            <<"| request message: "<<request.message
+            #endif
+            <<"| response code: "<<static_cast<std::underlying_type_t<ServerMessageType>>(response.type)
+            <<"| response size: "<<response.message.size()
+            #ifdef DEBUG_LOG
+            <<"| response message: "<<response.message
+            #endif
+            ;
+}
+
 void ClientSession::onReadyRead() {
     buffer+=socket->readAll();
 
@@ -114,15 +131,15 @@ void ClientSession::onReadyRead() {
     while(true){
         if(buffer.size()<4)break;
 
-        quint32 len=parsing::unpackNumber<quint32>(buffer);
-        quint32 totalLen=len+4;
+        quint64 len=parsing::unpackNumber<PacketLengthPrefix>(buffer);
+        quint64 totalLen=len+sizeof(PacketLengthPrefix);
         if(len>MAX_REQUEST_SIZE){
             fail({ServerMessageType::CRIT_CLIENT_ERR_Exceeded_maximum_request_length},{ClientMessageType::Invalid});
             return;
         }
 
         if(buffer.size()<totalLen)break;
-        QByteArray rawRequest = buffer.mid(4,len);
+        QByteArray rawRequest = buffer.mid(sizeof(PacketLengthPrefix),len);
         buffer.remove(0,totalLen);
 
         ServerMessage response;
@@ -142,11 +159,7 @@ void ClientSession::onReadyRead() {
             response = craftResponse(request);
         }
 
-        //debug temporary!!!
-
-        qInfo()<<sessionId<<" :: "<< quint64(request.type)<<":"<<request.message<<"|"<<Qt::hex<<quint64(response.type)<<":"<<response.message;
-
-        //\debug
+        logExchange(request,response);
 
         if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientCrit)){
             fail(response,request);

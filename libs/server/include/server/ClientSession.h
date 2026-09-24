@@ -24,6 +24,7 @@ private:
 
     ServerMessage validateClientVersion(const ClientMessage& request);
     ServerMessage craftResponse(const ClientMessage& request);
+    void logExchange(const ClientMessage& request,const ServerMessage& response);
     QByteArray frameResponse(const ServerMessage& response,const ClientMessage& request);
     QByteArray buildDiagnostic(const QByteArray& prefix,const ServerMessage& error,const ClientMessage& request);
     [[noreturn]] void fatalShutDown(const ServerMessage& error,const ClientMessage& request);
