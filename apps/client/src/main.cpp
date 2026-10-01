@@ -179,7 +179,7 @@ public:
         layout.addWidget(information);
         layout.addWidget(details);
     }
-    void reinitialize(ClientShutdownReason reason){
+    void reinitialize(ClientShutdownReason reason,Language language){
         details->setText("Shutdown reason code "+QString::number(static_cast<std::underlying_type_t<ClientShutdownReason>>(reason)));
     }
 };
@@ -189,12 +189,21 @@ class ErrorTryAgainPage: public QWidget{
     QVBoxLayout layout;
     QLabel* errorMessage=new QLabel("Something went wrong. Please try again.",this);
     QPushButton* okButton=new QPushButton("OK",this);
-
+private:
+    void disableInput(){
+        okButton->setDisabled(true);
+    }
+    void reEnableInput(){
+        okButton->setDisabled(false);
+    }
 public:
     ErrorTryAgainPage():layout(this){
         layout.addWidget(errorMessage);
         layout.addWidget(okButton);
-        connect(okButton,&QPushButton::clicked,this,&ErrorTryAgainPage::okClicked);
+        connect(okButton,&QPushButton::clicked,this,[this](){disableInput();emit okClicked();});
+    }
+    void reinitialize(Language language){
+        reEnableInput();
     }
 signals:
     void okClicked();
@@ -208,9 +217,17 @@ class LoginPage: public QWidget{
     QLabel* tryAgainMessage=new QLabel("No DB with given ID. Try again",this);
     QPushButton* loginButton=new QPushButton("login",this);
 
-    void loginClicked(){
+    void disableInput(){
         inputBox->setDisabled(true);
         loginButton->setDisabled(true);
+    }
+    void reEnableInput(){
+        inputBox->setDisabled(false);
+        loginButton->setDisabled(false);
+    }
+
+    void loginClicked(){
+        disableInput();
         QString dbId=inputBox->text();
         inputBox->setText("");
         emit dataBaseIDProvided(dbId);
@@ -222,18 +239,17 @@ public:
         layout.addWidget(inputBox);
         layout.addWidget(tryAgainMessage);
         layout.addWidget(loginButton);
-        loginButton->setDisabled(true);
+        disableInput();
         tryAgainMessage->setVisible(false);
-        connect(loginButton,&QPushButton::clicked,this,&LoginPage::loginClicked);
+        connect(loginButton,&QPushButton::clicked,this,[this](){disableInput(); emit loginClicked();});
     }
 public slots:
     void dbIdRejected(){
         tryAgainMessage->setVisible(true);
-        inputBox->setDisabled(false);
-        loginButton->setDisabled(false);
+        reEnableInput();
     }
     void allowLogin(){
-        loginButton->setDisabled(false);
+        reEnableInput();
     }
 signals:
     void dataBaseIDProvided(QString);
@@ -250,17 +266,34 @@ class MainPage:public QWidget{
     QPushButton* purchaseBtn = new QPushButton("Buy ticket",this);
     QPushButton* exitBtn=new QPushButton("EXIT",this);
 
+    void disableInput(){
+        debugEditCoinsBtn->setDisabled(true);
+        languagesBtn->setDisabled(true);
+        purchaseBtn->setDisabled(true);
+        exitBtn->setDisabled(true);
+    }
+
+    void reEnableInput(){
+        debugEditCoinsBtn->setDisabled(false);
+        languagesBtn->setDisabled(false);
+        purchaseBtn->setDisabled(false);
+        exitBtn->setDisabled(false);
+    }
+
 public:
     MainPage():layout(this){
         layout.addWidget(debugEditCoinsBtn);
         layout.addWidget(languagesBtn);
         layout.addWidget(purchaseBtn);
         layout.addWidget(exitBtn);
-        connect(debugEditCoinsBtn,&QPushButton::clicked,this,&MainPage::debugEditCoinsOption);
-        connect(languagesBtn,&QPushButton::clicked,this,&MainPage::languagesOption);
-        connect(purchaseBtn,&QPushButton::clicked,this,&MainPage::purchaseOption);
+        connect(debugEditCoinsBtn,&QPushButton::clicked,this,[this](){disableInput(); emit debugEditCoinsOption();});
+        connect(languagesBtn,&QPushButton::clicked,this,[this](){disableInput(); emit languagesOption();});
+        connect(purchaseBtn,&QPushButton::clicked,this,[this](){disableInput(); emit purchaseOption();});
         //it's fine here to hard quit because in real hardware this button would not exist
         connect(exitBtn,&QPushButton::clicked,&QApplication::quit);
+    }
+    void reinitialize(Language language){
+        reEnableInput();
     }
 signals:
     void debugEditCoinsOption();
@@ -308,6 +341,7 @@ public:
         connect(backButton,&QPushButton::clicked,this,&DebugEditCoins::backPressed);
         layout.addWidget(backButton);
     }
+    void reinitialize(Language language){}
 public slots:
     void setAmountValues(CoinInventory inventory){
         for(const auto& [denomination,amount]:inventory.getInventory()){
@@ -331,12 +365,25 @@ class LanguagesPage:public QWidget{
     QPushButton* englishBtn=new QPushButton("English "+QString::fromUcs4(U"\U0001F1FA\U0001F1F8"),this);
     QPushButton* backButton=new QPushButton("Back",this);
 
+    void disableInput(){
+        englishBtn->setDisabled(true);
+        backButton->setDisabled(true);
+    }
+
+    void reEnableInput(){
+        englishBtn->setDisabled(false);
+        backButton->setDisabled(false);
+    }
+
 public:
     LanguagesPage():layout(this){
         layout.addWidget(englishBtn);
         layout.addWidget(backButton);
-        connect(englishBtn,&QPushButton::clicked,this,[this](){emit languagePicked(Language::English);});
-        connect(backButton,&QPushButton::clicked,this,&LanguagesPage::backPressed);
+        connect(englishBtn,&QPushButton::clicked,this,[this](){disableInput(); emit languagePicked(Language::English);});
+        connect(backButton,&QPushButton::clicked,this,[this](){disableInput(); emit backPressed();});
+    }
+    void reinitialize(Language language){
+        reEnableInput();
     }
 signals:
     void backPressed();
@@ -353,6 +400,20 @@ class ChooseTicketPage: public QWidget{
 
     std::vector<QPushButton*> ticketButtons;
 
+    void disableInput(){
+        backButton->setDisabled(true);
+        for(auto& btn:ticketButtons){
+            btn->setDisabled(true);
+        }
+    }
+
+    void reEnableInput(){
+        backButton->setDisabled(false);
+        for(auto& btn:ticketButtons){
+            btn->setDisabled(false);
+        }
+    }
+
     void clearTicketButtons(){
         for(auto* btn:ticketButtons){
             buttonsLayout->removeWidget(btn);
@@ -360,16 +421,15 @@ class ChooseTicketPage: public QWidget{
         }
         ticketButtons.clear();
     }
-
 public:
     ChooseTicketPage():layout(this){
         buttonsLayout=new QVBoxLayout;
         layout.addLayout(buttonsLayout);
         layout.addWidget(errorMessage);
         layout.addWidget(backButton);
-        connect(backButton,&QPushButton::clicked,this,&ChooseTicketPage::backPressed);
+        connect(backButton,&QPushButton::clicked,this,[this](){disableInput(); emit backPressed();});
     }
-    void reinitialize(const std::vector<TicketData>& listOfTickets){
+    void reinitialize(const std::vector<TicketData>& listOfTickets,Language language){
         clearTicketButtons();
         if(listOfTickets.empty()){
             errorMessage->setVisible(true);
@@ -384,10 +444,12 @@ public:
                 ticketButtons.push_back(btn);
                 buttonsLayout->addWidget(btn);
                 connect(btn,&QPushButton::clicked,this,[this,ticket](){
+                    disableInput();
                     emit ticketPicked(ticket);
                 });
             }
         }
+        reEnableInput();
     }
 signals:
     void backPressed();
@@ -404,6 +466,18 @@ class InputPersonalDataPage:public QWidget{
     QPushButton* confirmButton = new QPushButton("confirm",this);
     QPushButton* cancelButton= new QPushButton("Cancel",this);
 
+    void disableInput(){
+        confirmButton->setDisabled(true);
+        inputField->setDisabled(true);
+        cancelButton->setDisabled(true);
+    }
+
+    void reEnableInput(){
+        confirmButton->setDisabled(false);
+        inputField->setDisabled(false);
+        cancelButton->setDisabled(false);
+    }
+
 public:
     InputPersonalDataPage():layout(this){
         layout.addWidget(title);
@@ -413,17 +487,20 @@ public:
         layout.addWidget(confirmButton);
         layout.addWidget(cancelButton);
         connect(cancelButton,&QPushButton::clicked,this,[this](){
+            disableInput();
             inputField->setText("");
             emit cancelPressed();
         }
         );
         connect(confirmButton,&QPushButton::clicked,this,[this](){
+            disableInput();
             emit personalDataSubmitted(inputField->text());
             inputField->setText("");
         }
         );
     }
-    void reinitialize(const TicketData& data){
+    void reinitialize(const TicketData& data,Language language){
+        reEnableInput();
         errorMessage->setVisible(false);
         title->setText("Input name associated with the ticket for "+ data.name);
     }
@@ -433,6 +510,7 @@ signals:
 public slots:
     //later we might pass some reason, but for now we assume it's because it was empty
     void submittedNameNotAccepted(){
+        reEnableInput();
         errorMessage->setVisible(true);
     }
 };
@@ -449,6 +527,22 @@ class PaymentPage: public QWidget{
     QPushButton* confirmButton= new QPushButton("confirm",this);
     QPushButton* cancelButton=new QPushButton("Cancel",this);
     
+    bool isEnough=false;
+
+    void disableInput(){
+        confirmButton->setDisabled(true);
+        coinSlot->setDisabled(true);
+        cancelButton->setDisabled(true);
+        insertButton->setDisabled(true);
+    }
+
+    void reEnableInput(){
+        if(isEnough)confirmButton->setDisabled(false);
+        coinSlot->setDisabled(false);
+        cancelButton->setDisabled(false);
+        insertButton->setDisabled(false);
+    }
+
     void processCoin(){
         emit denominationInserted(coinSlot->text());
         coinSlot->setText("");
@@ -466,13 +560,13 @@ public:
         layout.addWidget(confirmButton);
         confirmButton->setDisabled(true);
         layout.addWidget(cancelButton);
-        connect(cancelButton,&QPushButton::clicked,this,&PaymentPage::cancelPressed);
-        connect(insertButton,&QPushButton::clicked,this,&PaymentPage::processCoin);
-        connect(confirmButton,&QPushButton::clicked,this,&PaymentPage::confirmPressed);
+        connect(cancelButton,&QPushButton::clicked,this,[this](){disableInput(); emit cancelPressed();});
+        connect(insertButton,&QPushButton::clicked,this,[this](){disableInput(); emit processCoin();});
+        connect(confirmButton,&QPushButton::clicked,this,[this](){disableInput(); emit confirmPressed();});
     }
-    void reinitialize(const TicketData& data){
+    void reinitialize(const TicketData& data,Language language){
         instruction->setText("insert "+centsToPriceString(data.price)+" in coins or bills");
-        confirmButton->setDisabled(true);
+        reEnableInput();
         insertedMessage->setText("so far inserted $0.00");
     }
 signals:
@@ -484,10 +578,12 @@ signals:
 public slots:
     void amountInsertedChanged(Cents insertedAmount,bool isEnough){
         insertedMessage->setText("so far inserted "+centsToPriceString(insertedAmount));
+        this->isEnough=isEnough;
+        reEnableInput();
         unknownCoinMessage->setVisible(false);
-        if(isEnough)confirmButton->setDisabled(false);
     }
     void unknownCoin(){
+        reEnableInput();
         unknownCoinMessage->setVisible(true);
     }
 
@@ -505,7 +601,7 @@ public:
         layout.addWidget(reasonMessage);
         layout.addWidget(pleaseWaitMessage);
     }
-    void reinitialize(TransactionCancellationReason reason){
+    void reinitialize(TransactionCancellationReason reason,Language language){
         reasonMessage->setVisible(true);
         switch (reason){
         case TransactionCancellationReason::CouldNotGiveOutChange:
@@ -531,9 +627,9 @@ public:
     PrintingPage():layout(this){
         layout.addWidget(message);
     }
-
+    
     //This is obviously an abstraction of a physical process. Real implementation will need data to know what we're printing. Printing introduces edgecases, but we don't worry about that now.
-    void startPrinting(){
+    void startPrinting(Language Language){
         message->setText("Printing in progress...");
         QTimer::singleShot(3000, this, [this] {
             message->setText("Printing Done");
@@ -1007,8 +1103,6 @@ public:
 
     }
 
-
-
 public slots:
 
     void requestTicketListUpdate(){
@@ -1240,52 +1334,56 @@ public:
         session->onUIReady();
     }
 public slots:
-    //conceptually we'll call reinitialize on all of them, while also passing the current language, but now it's not necessary.
+    //we're passing the language in all 'reinitialize' as an apstraction of translating the page, but it's unused since there is only one language
     void goToMain(){
+        mainPage->reinitialize(session->getLanguage());
         stack.setCurrentWidget(mainPage);
     }
 
     void goToErrorStatePage(ClientShutdownReason reason){
-        errorStatePage->reinitialize(reason);
+        errorStatePage->reinitialize(reason,session->getLanguage());
         stack.setCurrentWidget(errorStatePage);
     }
 
     void goToReturningMoneyPage(TransactionCancellationReason reason){
-        returningMoneyPage->reinitialize(reason);
+        returningMoneyPage->reinitialize(reason,session->getLanguage());
         stack.setCurrentWidget(returningMoneyPage);
     }
 
     void goToDebugEditCoins(){
+        debugEditCoins->reinitialize(session->getLanguage());
         stack.setCurrentWidget(debugEditCoins);
     }
 
     void goToLanguages(){
+        languagesPage->reinitialize(session->getLanguage());
         stack.setCurrentWidget(languagesPage);
     }
 
     void goToPrintingPage(){
-        printingPage->startPrinting();
+        printingPage->startPrinting(session->getLanguage());
         stack.setCurrentWidget(printingPage);
     }
 
     void goToTakeCoinsPage(){
-        paymentPage->reinitialize(session->getCurrentTicket());
+        paymentPage->reinitialize(session->getCurrentTicket(),session->getLanguage());
         session->startTransaction();
         stack.setCurrentWidget(paymentPage);
     }
 
     void goToInputPersonalDataPage(const TicketData& data){
-        inputPersonalDataPage->reinitialize(data);
+        inputPersonalDataPage->reinitialize(data,session->getLanguage());
         stack.setCurrentWidget(inputPersonalDataPage);
     }
 
     void goToChooseTicketError(){
+        chooseTicketErrorPage->reinitialize(session->getLanguage());
         session->requestTicketListUpdate();
         stack.setCurrentWidget(chooseTicketErrorPage);
     }
 
     void goToChooseTicketPage(){
-        chooseTicketPage->reinitialize(session->getAvailableTickets());
+        chooseTicketPage->reinitialize(session->getAvailableTickets(),session->getLanguage());
         stack.setCurrentWidget(chooseTicketPage);
     }
 signals:

@@ -135,8 +135,6 @@ struct ServerResponse{
     ServerMessageType type;
     ClientMessageType inResponseTo;
     QByteArray message="";
-    ServerResponse()=default;
-    ServerResponse(const ClientMessage& request,const ServerMessage& response):type(response.type),inResponseTo(request.type),message(response.message){}
 
     QString logString ()const{
         QString category;
