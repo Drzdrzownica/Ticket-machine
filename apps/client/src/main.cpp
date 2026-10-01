@@ -14,6 +14,7 @@
 
 #include "protocol/serialization.h"
 #include "protocol/constants.h"
+#include "logging.h"
 
 //this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
 struct CoinInventory{
@@ -627,7 +628,7 @@ public slots:
         }else{
             Cents sumInserted=transactionInventory.getTotalAmount();
             if(sumInserted<ticketCost){
-                qWarning()<<"not enough money to afford the ticket";
+                logging::log("Warning: not enough money to afford the ticket");
                 emit canNotGiveOutChange();
             }else{
                 Cents changeValue=sumInserted-ticketCost;
@@ -722,7 +723,7 @@ Q_OBJECT
             emit versionValidated();
             break;
         case ServerMessageType::CLIENT_WARNING_Version_already_validated:
-            qWarning()<<"Version already validated";
+            //no-op
             break;
         case ServerMessageType::CRIT_CLIENT_ERR_Version_mismatch:
             emit requestedClientShutdown(ClientShutdownReason::Version_validation_mismatch);
@@ -818,7 +819,7 @@ Q_OBJECT
             return;
         }
 
-        logServerResponse(framedResponse);
+        logging::log(framedResponse.logString());
 
         if( serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ServerCrit) || 
             serverMessageCheckCategory(framedResponse.type,ServerMessageCategory::ClientCrit)){
@@ -874,40 +875,8 @@ Q_OBJECT
         }
 
     }
-
-    //todo: write it to a file, but for now I prefer it in console
-    void logClientMessage(const ClientMessage &message){
-        qInfo()
-            <<"out"
-            <<"| code: "<<static_cast<std::underlying_type_t<ClientMessageType>>(message.type)
-            <<"| payload length:"<<message.message.size()
-            #ifdef DEBUG_LOG
-            <<"| contents:"<<message.message
-            #endif
-            ;
-    }
-    void logServerResponse(const ServerResponse& response){
-        QByteArray category;
-        if(serverMessageCheckCategory(response.type,ServerMessageCategory::Ok))category = "OK";
-        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientWarning))category = "WARN";
-        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::Error))category = "ERR";
-        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::ServerCrit))category = "SERVER_CRIT";
-        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientCrit))category = "CLIENT_CRIT";
-        else category = "UNRECOGNIZED";
-        qInfo()
-            <<"in" 
-            <<"| re: "<<static_cast<std::underlying_type_t<ClientMessageType>>(response.inResponseTo)
-            <<"| code: "<< static_cast<std::underlying_type_t<ServerMessageType>>(response.type) 
-            <<"| category:"<< category
-            <<"| payload length:"<<response.message.size()
-            #ifdef DEBUG_LOG
-            <<"| contents:"<< response.message
-            #endif
-            ;
-    }
-
     void sendRequest(const ClientMessage &message){
-        logClientMessage(message);
+        logging::log(message.logString());
         socket.write(frameRequest(message));
     }
 
@@ -1058,7 +1027,7 @@ public slots:
     void prepareShutdown(ClientShutdownReason reason){
         paymentProcessor->panicEjectMoney();
         serverConnection->disconnectSocket();
-        emit paincShutdown(reason);
+        emit panicShutdown(reason);
     }
     
     void DEBUGCoinAdded(Cents coin){
@@ -1147,7 +1116,7 @@ public slots:
     }
 
 signals:
-    void paincShutdown(ClientShutdownReason);
+    void panicShutdown(ClientShutdownReason);
     void restartStatus();
     void ticketListChanged(std::vector<TicketData>);
     void localInventoryChanged(CoinInventory);
@@ -1203,7 +1172,7 @@ public:
 
         errorStatePage=new ErrorStatePage;
         stack.addWidget(errorStatePage);
-        connect(session,&SessionController::paincShutdown,this,&MainWindow::goToErrorStatePage);
+        connect(session,&SessionController::panicShutdown,this,&MainWindow::goToErrorStatePage);
 
 
         mainPage=new MainPage;
@@ -1271,7 +1240,6 @@ public:
         session->onUIReady();
     }
 public slots:
-
     //conceptually we'll call reinitialize on all of them, while also passing the current language, but now it's not necessary.
     void goToMain(){
         stack.setCurrentWidget(mainPage);
@@ -1330,5 +1298,4 @@ int main(int argc, char *argv[]){
 
     return app.exec();
 }
-
 #include "main.moc"

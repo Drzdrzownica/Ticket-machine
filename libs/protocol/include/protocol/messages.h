@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_MESSAGES_H
 #define PROTOCOL_MESSAGES_H
 #include <QCoreApplication>
+#include "protocol/constants.h"
 
 //While still in active development, don't fix the enum values yet, as contents of below enums are still very dynamic. Give them explicit values before deployment.
 enum class ServerMessageType:quint16{
@@ -118,12 +119,49 @@ struct ServerMessage{
 struct ClientMessage{
     ClientMessageType type;
     QByteArray message="";//optional
+    QString logString ()const{
+        QString result = QString(""
+            "ClientMessage "
+            " | code: %1"
+            " | payload length: %2").arg(static_cast<std::underlying_type_t<ClientMessageType>>(type)).arg(message.size());
+        #ifdef DEBUG_LOG
+        result +=QString(" | contents: %1").arg(QString::fromUtf8(message));
+        #endif
+        return result;
+    }
 };
 
 struct ServerResponse{
     ServerMessageType type;
     ClientMessageType inResponseTo;
     QByteArray message="";
+    ServerResponse()=default;
+    ServerResponse(const ClientMessage& request,const ServerMessage& response):type(response.type),inResponseTo(request.type),message(response.message){}
+
+    QString logString ()const{
+        QString category;
+        if(serverMessageCheckCategory(type,ServerMessageCategory::Ok))category = "OK";
+        else if(serverMessageCheckCategory(type,ServerMessageCategory::ClientWarning))category = "WARN";
+        else if(serverMessageCheckCategory(type,ServerMessageCategory::Error))category = "ERR";
+        else if(serverMessageCheckCategory(type,ServerMessageCategory::ServerCrit))category = "SERVER_CRIT";
+        else if(serverMessageCheckCategory(type,ServerMessageCategory::ClientCrit))category = "CLIENT_CRIT";
+        else category = "UNRECOGNIZED";
+        QString result = QString(""
+            "ServerResponse"
+            " | re: %1"
+            " | code: %2"
+            " | category: %3"
+            " | payload length: %4")
+            .arg(static_cast<std::underlying_type_t<ClientMessageType>>(inResponseTo))
+            .arg(static_cast<std::underlying_type_t<ServerMessageType>>(type))
+            .arg(category)
+            .arg(message.size());
+        #ifdef DEBUG_LOG
+        result+=QString("| contents:").arg(message);
+        #endif
+        return result;
+    }
+
     bool operator==(const ServerResponse&)const=default;
 };
 #endif //PROTOCOL_MESSAGES_H
