@@ -13,13 +13,12 @@ enum class ServerMessageType:quint16{
     ERR_No_checkout_in_progress,
     ERR_Incorrect_argument_count,
     ERR_Checkout_with_no_arguments,
-    ERR_Parsing_error,
     ERR_Ticket_name_empty,
     ERR_Different_ticket_already_in_checkout,
-    ERR_Invalid_ticket_name,
-    ERR_No_tickets_in_stock_during_checkout,
+    ERR_Invalid_ticket_id,
+    ERR_No_tickets_in_stock_while_initiating_checkout,
     ERR_Empty_string_argument,
-    ERR_Disallowed_name_try_again,
+    ERR_Disallowed_name,
     ERR_Item_not_in_checkout,
     ERR_Wrong_item_in_checkout,
     ERR_Ticket_no_longer_valid, //automatically removes reservation
@@ -31,7 +30,7 @@ enum class ServerMessageType:quint16{
     CRIT_SERVER_ERR_Ticket_list_overflow,
     CRIT_SERVER_ERR_No_valid_tickets_found,
     CRIT_SERVER_ERR_END_RESERVED,
-
+    
     //critical client errors - always disconnect socket : 0x2000<=val<0x3000
     CRIT_CLIENT_ERR_BEGIN_RESERVED=0x2000,
     CRIT_CLIENT_ERR_Invalid_ticket_in_reservation,
@@ -39,6 +38,7 @@ enum class ServerMessageType:quint16{
     CRIT_CLIENT_ERR_Version_mismatch,
     CRIT_CLIENT_ERR_Exceeded_maximum_request_length,
     CRIT_CLIENT_ERR_Request_buffer_overflow,
+    CRIT_CLIENT_ERR_Parsing_error,
     CRIT_CLIENT_ERR_END_RESERVED,
 
     //client warnings : 0x3000<=val<0x4000
@@ -126,4 +126,4 @@ struct ServerResponse{
     QByteArray message="";
     bool operator==(const ServerResponse&)const=default;
 };
-#endif
+#endif //PROTOCOL_MESSAGES_H

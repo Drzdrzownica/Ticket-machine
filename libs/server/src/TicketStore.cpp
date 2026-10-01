@@ -76,9 +76,9 @@ ServerMessage TicketStore::tryCheckout(SessionId sessionId,const ClientMessage& 
     try{
         qsizetype offset=0;
         ticketId=parsing::unpackNumber<TicketId>(request.message,offset);
-        if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
+        if(offset!=request.message.size())return {ServerMessageType::CRIT_CLIENT_ERR_Parsing_error};
     }catch(std::exception& e){
-        return {ServerMessageType::ERR_Parsing_error};
+        return {ServerMessageType::CRIT_CLIENT_ERR_Parsing_error};
     }
 
     auto checkout = inCheckout.find(sessionId);
@@ -87,14 +87,14 @@ ServerMessage TicketStore::tryCheckout(SessionId sessionId,const ClientMessage& 
         else return {ServerMessageType::ERR_Different_ticket_already_in_checkout};
     }
     auto ticket = tickets.find(ticketId);
-    if(ticket==tickets.end())return {ServerMessageType::ERR_Invalid_ticket_name};
+    if(ticket==tickets.end())return {ServerMessageType::ERR_Invalid_ticket_id};
     
     if(ticket.value().availableAmount>0){
         inCheckout.emplace(sessionId,ticketId);
         ticket.value().availableAmount--;
         return {ServerMessageType::OK,parsing::packNumber(ticketId)};
     }else{
-        return {ServerMessageType::ERR_No_tickets_in_stock_during_checkout};
+        return {ServerMessageType::ERR_No_tickets_in_stock_while_initiating_checkout};
     }
 }
 
@@ -114,9 +114,9 @@ ServerMessage TicketStore::handleNameValidationRequest(const ClientMessage& requ
     try{
         qsizetype offset=0;
         buyerName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
-        if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
+        if(offset!=request.message.size())return {ServerMessageType::CRIT_CLIENT_ERR_Parsing_error};
     }catch(std::exception& e){
-        return {ServerMessageType::ERR_Parsing_error};
+        return {ServerMessageType::CRIT_CLIENT_ERR_Parsing_error};
     }
     if(validateName(buyerName))return {ServerMessageType::OK,parsing::packNumber<quint8>(true)};
     else return {ServerMessageType::OK,parsing::packNumber<quint8>(false)};
@@ -130,25 +130,26 @@ ServerMessage TicketStore::confirmPurchase(SessionId sessionId,const ClientMessa
         qsizetype offset=0;
         buyerName=parsing::unpack8BitPrefixedByteArray(request.message,offset);
         ticketId=parsing::unpackNumber<TicketId>(request.message,offset);
-        if(offset!=request.message.size())return {ServerMessageType::ERR_Parsing_error};
+        if(offset!=request.message.size())return {ServerMessageType::CRIT_CLIENT_ERR_Parsing_error};
     }catch(std::exception& e){
-        return {ServerMessageType::ERR_Parsing_error};
+        return {ServerMessageType::CRIT_CLIENT_ERR_Parsing_error};
     }
-    if(buyerName.isEmpty())return {ServerMessageType::ERR_Empty_string_argument};
-
     auto reservation = inCheckout.find(sessionId);
-
+    
     if(reservation==inCheckout.end())return {ServerMessageType::ERR_Item_not_in_checkout};
-    if(tickets.find(ticketId)==tickets.end()){
+    
+    if(reservation.value()!=ticketId){
         inCheckout.erase(reservation);
-        return {ServerMessageType::ERR_Ticket_no_longer_valid};
+        return {ServerMessageType::ERR_Wrong_item_in_checkout};
     }
-    if(reservation.value()!=ticketId)return {ServerMessageType::ERR_Wrong_item_in_checkout};
-    if(validateName(buyerName)==false)return {ServerMessageType::ERR_Disallowed_name_try_again};
+    inCheckout.erase(reservation);
+
+    if(tickets.find(ticketId)==tickets.end())return {ServerMessageType::ERR_Ticket_no_longer_valid};
+    if(validateName(buyerName)==false)return {ServerMessageType::ERR_Disallowed_name};
+
     //todo: stop the 5 minutes cancel-checkout clock
     //todo: Push [name][ticket_ID] into the database. On fail return error. For now as a placeholder:
     qInfo()<<buyerName+" purchased ticket for id"<<ticketId;
-    inCheckout.erase(reservation);
     
     return {ServerMessageType::OK,parsing::packNumber<TicketId>(ticketId)};
 }

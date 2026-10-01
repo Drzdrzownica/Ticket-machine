@@ -40,4 +40,4 @@ namespace parsing{
     ClientMessage unpackClientMessage(const QByteArray& data);
     ServerResponse unpackServerResponse(const QByteArray& data);
 }
-#endif
+#endif //SERIALIZATION_H

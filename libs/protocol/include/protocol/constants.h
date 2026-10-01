@@ -16,4 +16,4 @@ using Cents = quint64;
 using PacketLengthPrefix = quint32;
 inline const QByteArray protocolVersion = "0.0.0.1";
 
-#endif
+#endif //DEBUG_LOG

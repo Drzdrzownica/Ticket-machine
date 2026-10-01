@@ -31,4 +31,4 @@ private:
     void fail(const ServerMessage& error,const ClientMessage& request);
     void onReadyRead();
 };
-#endif
+#endif //CLIENT_SESSION_H

@@ -31,4 +31,4 @@ public:
 
     ServerMessage confirmPurchase(SessionId sessionId,const ClientMessage& request);
 };
-#endif
+#endif //TICKET_STORE_H

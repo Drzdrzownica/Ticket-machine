@@ -15,7 +15,7 @@
 #include "protocol/serialization.h"
 #include "protocol/constants.h"
 
-
+//this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
 struct CoinInventory{
     static constexpr std::array<Cents,8> acceptedDenominationsCents{1,5,10,25,100,500,1000,2000};
     static_assert(std::ranges::is_sorted(acceptedDenominationsCents));
@@ -33,7 +33,7 @@ struct CoinInventory{
 private:
     std::array<quint64,acceptedDenominationsCents.size()> inventory{};
     quint64& amountOf(Cents value){
-        //the competetive programmer living in my heart screams at me to optimize those O(n) look-ups, but it's really unnecessary here.
+        //the competitive programmer living in my heart screams at me to optimize those O(n) look-ups, but it's really unnecessary here.
         auto iterator=std::find(acceptedDenominationsCents.begin(),acceptedDenominationsCents.end(),value);
         Q_ASSERT(iterator!=acceptedDenominationsCents.end());
         return inventory[std::distance(acceptedDenominationsCents.begin(),iterator)];
@@ -50,7 +50,7 @@ public:
         amountOf(value)-=amount;
     }
 
-    std::vector<std::pair<Cents,quint64>> getInventoryList()const{
+    std::vector<std::pair<Cents,quint64>> getInventory()const{
         std::vector<std::pair<Cents,quint64>> result;
         result.reserve(inventory.size());
         for(std::size_t i=0;i<inventory.size();i++){
@@ -58,7 +58,7 @@ public:
         }
         return result;
     }
-    //we explicitly don't worry about overflow here. There is litterally not enough money in the world
+    //we explicitly don't worry about overflow here. There is literally not enough money in the world
     Cents getTotalAmount() const{
         Cents result=0;
         for(std::size_t i=0;i<inventory.size();i++){
@@ -131,7 +131,6 @@ public:
     }
 };
 
-//this is meant as client-side UI, meant to run on PC and simulate a version that will run on dedicated hardware,
 QString centsToPriceString(Cents cents){
     return QString("$%1.%2").arg(cents/100).arg(cents%100,2,10,QChar('0'));
 }
@@ -140,9 +139,12 @@ enum class Language{
     English
 };
 
-enum class TransactionCancelationReason{
+enum class TransactionCancellationReason{
     CouldNotGiveOutChange,
+    ServerDisconnected,
     UserRequested,
+    SocketError,
+    BuyFailed,
     Error
 };
 
@@ -150,10 +152,13 @@ enum class ClientShutdownReason:quint64{
     Version_validation_mismatch,
     Version_validation_issue,
     Ticket_list_parsing_issue,
-    Ticket_list_retrival_issue,
+    Ticket_list_retrieval_issue,
     Generic_server_requested,
     Response_parsing_issue,
-    Transaction_state_violation
+    Unexpected_response_type,
+    Transaction_state_violation,
+    Server_disconnected,
+    Socket_error
 };
 
 struct TicketData{
@@ -178,10 +183,26 @@ public:
     }
 };
 
+class ErrorTryAgainPage: public QWidget{
+    Q_OBJECT
+    QVBoxLayout layout;
+    QLabel* errorMessage=new QLabel("Something went wrong. Please try again.",this);
+    QPushButton* okButton=new QPushButton("OK",this);
+
+public:
+    ErrorTryAgainPage():layout(this){
+        layout.addWidget(errorMessage);
+        layout.addWidget(okButton);
+        connect(okButton,&QPushButton::clicked,this,&ErrorTryAgainPage::okClicked);
+    }
+signals:
+    void okClicked();
+};
+
 class LoginPage: public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
-    QLabel* instruction=new QLabel("Enter The DB id",this);
+    QLabel* instruction=new QLabel("Enter The DB id \n(the local databases are not yet hooked up. For now enter \"temp\")",this);
     QLineEdit* inputBox=new QLineEdit(this);
     QLabel* tryAgainMessage=new QLabel("No DB with given ID. Try again",this);
     QPushButton* loginButton=new QPushButton("login",this);
@@ -288,7 +309,7 @@ public:
     }
 public slots:
     void setAmountValues(CoinInventory inventory){
-        for(const auto& [denomination,amount]:inventory.getInventoryList()){
+        for(const auto& [denomination,amount]:inventory.getInventory()){
             denomination_AmountDisplay[denomination]->setText(QString::number(amount));
             QPushButton* subBtn=denomination_SubtractButton[denomination];
             if(amount==0)subBtn->setDisabled(true);
@@ -483,17 +504,16 @@ public:
         layout.addWidget(reasonMessage);
         layout.addWidget(pleaseWaitMessage);
     }
-    void reinitialize(TransactionCancelationReason reason){
+    void reinitialize(TransactionCancellationReason reason){
         reasonMessage->setVisible(true);
         switch (reason){
-        case TransactionCancelationReason::CouldNotGiveOutChange:
+        case TransactionCancellationReason::CouldNotGiveOutChange:
             reasonMessage->setText("Sorry, the machine could not produce the exact change");
             break;
-        case TransactionCancelationReason::UserRequested:
+        case TransactionCancellationReason::UserRequested:
             reasonMessage->setVisible(false);
             break;
-        case TransactionCancelationReason::Error:
-            //continue to the default case
+        case TransactionCancellationReason::Error: //continue to the default case
         default:
             reasonMessage->setText("Sorry, something went wrong. Returning inserted money");
             break;
@@ -549,7 +569,7 @@ private:
     }
 
     void outputCoins(CoinInventory coins){
-    for(const auto& [denomination,amount]:coins.getInventoryList()){
+    for(const auto& [denomination,amount]:coins.getInventory()){
         qInfo()<<amount<<" coins of denomination "<<denomination<<" returned";    
     }
 }
@@ -570,7 +590,7 @@ signals:
     void amountInsertedChanged(Cents newValue,bool isEnough);
     void invalidCoinInserted();
     void purchaseCompleted();
-    void returningCoins(TransactionCancelationReason);
+    void returningCoins(TransactionCancellationReason);
     void coinsReturned();
     void canNotGiveOutChange();
     void changeReady();
@@ -637,7 +657,7 @@ public slots:
         }
     }
 
-    void cancelTransaction(TransactionCancelationReason reason){
+    void cancelTransaction(TransactionCancellationReason reason){
         emit returningCoins(reason);
         outputCoins(transactionInventory);
         resetTransaction();
@@ -662,12 +682,6 @@ class ServerConnection:public QObject{
 Q_OBJECT
     QTcpSocket socket;
     QByteArray buffer;
-
-    //When I'm finished with the current part I'll revisit and look at all calls individually. Should be broken down into multiple functions.
-    //Also criticly, remamber to eject all current transaction money before shutdown
-    [[deprecated("placeholder function")]] void unrecorevableError_todo(QByteArray hint){
-        qFatal("paceholder, unrecorevable error: %s", qPrintable(hint));
-    }
 
     QByteArray frameRequest(const ClientMessage& message){
         QByteArray result;
@@ -726,9 +740,73 @@ Q_OBJECT
             handleRawTicketListData(response.message);
             break;
         default:
-            emit requestedClientShutdown(ClientShutdownReason::Ticket_list_retrival_issue);
+            emit requestedClientShutdown(ClientShutdownReason::Ticket_list_retrieval_issue);
             break;
         }
+    }
+
+    void handleValidateName(const ServerResponse& response){
+        if(response.type==ServerMessageType::OK){
+            bool accepted = parsing::unpackNumber<quint8>(response.message);
+            if(accepted==true)emit nameAccepted();
+            else emit nameRejected();
+        //ValidateName theoretically has no way to fail and return error, for 'problematic' input (whatever that means) it should just return OK:false 
+        }else emit requestedClientShutdown(ClientShutdownReason::Unexpected_response_type);
+    }
+
+    void handleStartCheckoutResponse(const ServerResponse& response){
+        switch (response.type)
+        {
+        case ServerMessageType::OK:
+        case ServerMessageType::CLIENT_WARNING_Ticket_already_in_checkout:
+            emit checkOutStarted(parsing::unpackNumber<TicketId>(response.message));
+            break;
+        case ServerMessageType::ERR_No_tickets_in_stock_while_initiating_checkout:
+        case ServerMessageType::ERR_Invalid_ticket_id:
+            emit initiatingCheckoutRefused();
+            break;
+        default:
+            emit requestedClientShutdown(ClientShutdownReason::Unexpected_response_type);
+            break;
+        }
+    }
+
+    void handleCancelCheckoutResponse(const ServerResponse& response){
+        if(response.type==ServerMessageType::OK){
+            emit checkoutCanceled();
+        }else if(response.type==ServerMessageType::ERR_No_checkout_in_progress){
+            //error is logged upon recival, we can act as if cancaling was a success.
+            emit checkoutCanceled();
+        }else{
+            //there is no legitimate reason why server would refuse to cancel a partial transaction.
+            emit requestedClientShutdown(ClientShutdownReason::Unexpected_response_type);
+        }
+    }
+
+    //buy call always deletes transaction regardless of the success, no need for a separate call
+    void handleBuyResponse(const ServerResponse& response){
+        switch (response.type){
+        case ServerMessageType::OK:
+            emit purchaseRecorded(parsing::unpackNumber<TicketId>(response.message));
+            break;
+        case ServerMessageType::ERR_Item_not_in_checkout:
+        //Wrong_item_in_checkout is iffy, but let's call this a recovery from an incorrect state
+        case ServerMessageType::ERR_Wrong_item_in_checkout:
+        case ServerMessageType::ERR_Ticket_no_longer_valid:
+        //this one uses the same validation as the explicit validation call, so should never occur
+        case ServerMessageType::ERR_Disallowed_name:
+            emit purchaseFailed();
+            break;
+        default:
+            emit requestedClientShutdown(ClientShutdownReason::Unexpected_response_type);
+            break;
+        }
+    }
+
+    void handleUnrecognizedMessageType(const ServerResponse& response){
+        if(serverMessageCheckCategory(response.type,ServerMessageCategory::ClientWarning))return;//do nothing, it's logged anyway
+        else if(serverMessageCheckCategory(response.type,ServerMessageCategory::Ok))return;//as above
+        else emit requestedClientShutdown(ClientShutdownReason::Unexpected_response_type);
     }
 
     void handleServerMessage(const QByteArray& data){
@@ -757,43 +835,34 @@ Q_OBJECT
                 handleGetTicketListResponse(framedResponse);
                 break;
             case ClientMessageType::REQUEST_Start_checkout:
-                if(framedResponse.type==ServerMessageType::OK){
-                    emit checkOutStarted(parsing::unpackNumber<TicketId>(framedResponse.message));
-                }else unrecorevableError_todo("Start_checkout not OK");
+                handleStartCheckoutResponse(framedResponse);
                 break;
             case ClientMessageType::REQUEST_Buy:
-                if(framedResponse.type==ServerMessageType::OK){
-                    emit purchaseRecorded(parsing::unpackNumber<TicketId>(framedResponse.message));
-                }else unrecorevableError_todo("Buy not OK");
+                handleBuyResponse(framedResponse);
                 break;
             case ClientMessageType::REQUEST_Cancel_checkout:
-                if(framedResponse.type==ServerMessageType::OK){
-                    emit checkoutCanceled();
-                }else unrecorevableError_todo("Cancel_checkout not OK");
+                handleCancelCheckoutResponse(framedResponse);
                 break;
             case ClientMessageType::REQUEST_Validate_name:
-                if(framedResponse.type==ServerMessageType::OK){
-                    bool response = parsing::unpackNumber<quint8>(framedResponse.message);
-                    if(response==true)emit nameAccepted();
-                    else emit nameRejected();
-                }else unrecorevableError_todo("Validate_name not OK");
+                handleValidateName(framedResponse);
                 break;
             default:
-                unrecorevableError_todo("response to unknown request type");
+                handleUnrecognizedMessageType(framedResponse);
         }
     }
 
     void onReadyRead(){
         buffer+=socket.readAll();
         if(buffer.size()>MAX_BUFFER_SIZE){
-            unrecorevableError_todo("server flooded machine");
+            emit requestedClientShutdown(ClientShutdownReason::Response_parsing_issue);
+            return;
         }
         while(true){
             if(buffer.size()<sizeof(PacketLengthPrefix))break;
             
             quint64 len=parsing::unpackNumber<PacketLengthPrefix>(buffer);
             if(len>MAX_MESSAGE_SIZE){
-                unrecorevableError_todo("too long message from server");
+                emit requestedClientShutdown(ClientShutdownReason::Response_parsing_issue);
                 return;
             } 
             quint64 totalLen=len+sizeof(PacketLengthPrefix);
@@ -845,6 +914,13 @@ Q_OBJECT
 public:
 
     ServerConnection(QObject* parent=nullptr):QObject(parent),socket(this){
+        connect(&socket, &QTcpSocket::connected,this, &ServerConnection::onConnected);
+        connect(&socket, &QTcpSocket::errorOccurred,this,  [this](){
+            emit requestedClientShutdown(ClientShutdownReason::Socket_error);
+        });
+        connect(&socket, &QTcpSocket::disconnected,this, [this](){
+            emit requestedClientShutdown(ClientShutdownReason::Server_disconnected);
+        });
         connect(&socket, &QTcpSocket::readyRead,this,&ServerConnection::onReadyRead);
     }
 
@@ -854,11 +930,6 @@ public slots:
     }
     void connectToServer(){
         socket.connectToHost("127.0.0.1", 12345);
-        if(socket.waitForConnected(5000)){// wait 5s in case of a slow connection
-            emit serverReady();
-        }else{
-            emit failedToConnectToServer();
-        }
     }
     void requestTicketList(){
 
@@ -887,12 +958,13 @@ signals:
     void checkoutCanceled();
     void purchaseRecorded(TicketId);
     void checkOutStarted(TicketId);
-    void failedToConnectToServer();
     void versionValidated();
-    void serverReady();
+    void onConnected();
     void ticketListUpdated(std::vector<TicketData>);
     void nameAccepted();
     void nameRejected();
+    void initiatingCheckoutRefused();
+    void purchaseFailed();
 };
 
 class SessionController:public QObject{
@@ -943,13 +1015,19 @@ public:
         connect(paymentProcessor,&PaymentProcessor::changeReady,             this,&SessionController::changeReady);
         
         connect(serverConnection,&ServerConnection::checkOutStarted, this,&SessionController::serverAcceptedTicket);
+        connect(serverConnection,&ServerConnection::initiatingCheckoutRefused,this,&SessionController::ticketChoiceRejected);
         connect(serverConnection,&ServerConnection::purchaseRecorded,paymentProcessor,&PaymentProcessor::finalizePurchase);
+        connect(serverConnection,&ServerConnection::purchaseFailed,this,[this](){
+            paymentProcessor->cancelTransaction(TransactionCancellationReason::BuyFailed);
+        });
+
         connect(paymentProcessor,&PaymentProcessor::purchaseCompleted,this,&SessionController::purchaseCompleted);
-        connect(serverConnection,&ServerConnection::serverReady,serverConnection,&ServerConnection::validateVersion);
+        connect(serverConnection,&ServerConnection::onConnected,serverConnection,&ServerConnection::validateVersion);
         connect(serverConnection,&ServerConnection::nameAccepted,this,&SessionController::nameAccepted);
         connect(serverConnection,&ServerConnection::nameRejected,this,&SessionController::nameRejected);
         connect(serverConnection,&ServerConnection::requestedClientShutdown,this,&SessionController::prepareShutdown);
         connect(paymentProcessor,&PaymentProcessor::requestedShutdown,this,&SessionController::prepareShutdown);
+
 
         //after version has been validated server should send updates to the ticketList on it's own (that part is not hooked up yet), but we need the initial list.
         connect(serverConnection,&ServerConnection::versionValidated,serverConnection,&ServerConnection::requestTicketList);
@@ -957,14 +1035,17 @@ public:
         connect(serverConnection,&ServerConnection::ticketListUpdated,this,&SessionController::updateTicketList);
         
         //should probably put UI in "sleep mode" and retry from time to time, but I can write that last. For now this is a fine placeholder:
-        connect(serverConnection,&ServerConnection::failedToConnectToServer,this,[](){
-            qFatal("paceholder, You probably forgot to fire up the server first");
-        });
+
     }
 
 
 
 public slots:
+
+    void requestTicketListUpdate(){
+        serverConnection->requestTicketList();
+    }
+
     void updateTicketList(std::vector<TicketData> list){
         availableTickets=list;
         if(initialServerSyncComplete)emit ticketListChanged(availableTickets);
@@ -1048,17 +1129,17 @@ public slots:
 
     void userCanceledTransaction(){
         serverConnection->cancelTransaction();
-        paymentProcessor->cancelTransaction(TransactionCancelationReason::UserRequested);
+        paymentProcessor->cancelTransaction(TransactionCancellationReason::UserRequested);
     }
 
     void cannotGiveOutChange(){
         serverConnection->cancelTransaction();
-        paymentProcessor->cancelTransaction(TransactionCancelationReason::CouldNotGiveOutChange);
+        paymentProcessor->cancelTransaction(TransactionCancellationReason::CouldNotGiveOutChange);
     }
 
     void errorWhenPreparingChange(){
         serverConnection->cancelTransaction();
-        paymentProcessor->cancelTransaction(TransactionCancelationReason::Error);
+        paymentProcessor->cancelTransaction(TransactionCancellationReason::Error);
     }
 
     void changeReady(){
@@ -1078,7 +1159,8 @@ signals:
     void invalidCoinInserted();
     void purchaseCompleted();
     void ticketChoiceAccepted(TicketData);
-    void returningCoins(TransactionCancelationReason);
+    void ticketChoiceRejected();
+    void returningCoins(TransactionCancellationReason);
     void coinsReturned();
 
     void serverReady();
@@ -1096,6 +1178,7 @@ class MainWindow:public QWidget{
     DebugEditCoins* debugEditCoins;
     LanguagesPage* languagesPage;
     ChooseTicketPage* chooseTicketPage;
+    ErrorTryAgainPage* chooseTicketErrorPage;
     InputPersonalDataPage* inputPersonalDataPage;
     PaymentPage* paymentPage;
     ReturningMoneyPage* returningMoneyPage;
@@ -1149,7 +1232,11 @@ public:
         connect(chooseTicketPage,&ChooseTicketPage::backPressed ,this,&MainWindow::goToMain);
         connect(chooseTicketPage,&ChooseTicketPage::ticketPicked,session,&SessionController::ticketPicked);
         connect(session,&SessionController::ticketChoiceAccepted,this,&MainWindow::goToInputPersonalDataPage);
+        connect(session,&SessionController::ticketChoiceRejected,this,&MainWindow::goToChooseTicketError);
 
+        chooseTicketErrorPage=new ErrorTryAgainPage();
+        stack.addWidget(chooseTicketErrorPage);
+        connect(chooseTicketErrorPage,&ErrorTryAgainPage::okClicked,this,&MainWindow::goToChooseTicketPage);
 
         inputPersonalDataPage=new InputPersonalDataPage();
         stack.addWidget(inputPersonalDataPage);
@@ -1195,7 +1282,7 @@ public slots:
         stack.setCurrentWidget(errorStatePage);
     }
 
-    void goToReturningMoneyPage(TransactionCancelationReason reason){
+    void goToReturningMoneyPage(TransactionCancellationReason reason){
         returningMoneyPage->reinitialize(reason);
         stack.setCurrentWidget(returningMoneyPage);
     }
@@ -1222,6 +1309,11 @@ public slots:
     void goToInputPersonalDataPage(const TicketData& data){
         inputPersonalDataPage->reinitialize(data);
         stack.setCurrentWidget(inputPersonalDataPage);
+    }
+
+    void goToChooseTicketError(){
+        session->requestTicketListUpdate();
+        stack.setCurrentWidget(chooseTicketErrorPage);
     }
 
     void goToChooseTicketPage(){
