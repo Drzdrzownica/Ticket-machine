@@ -1,10 +1,15 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
 
-#define DEBUG_LOG
+//#define DEBUG_LOG
 
 #ifdef DEBUG_LOG
+#ifdef _MSC_VER
+#pragma message("WARNING: Logging potentially sensitive data is enabled")
+#else
 #warning "WARNING: Logging potentially sensitive data is enabled"
+#endif
+
 #endif
 
 #if defined(DEBUG_LOG) &&  defined(NDEBUG)

@@ -8,6 +8,28 @@ Program symuluje biletomat przyjmujący gotówkę i drukujący bilety. W przypad
 Nie działa on bez połączenia z serwerem, który to zatwierdza lub odmawia transakcji, oraz decyduje jakie bilety są dostępne.
 Wkładanie monet do maszyny symulowane jest poprzez wpisywanie nominału w centach. Wybrałem dolary jako walutę, ponieważ projekt wykonany jest w języku angielskim.
 
+### Kompilacja
+Upewnij się że masz zainstlowane QT oraz CMake.
+
+#### Linux:
+Wprowadź następujące komendy do konsoli w folderze projektu:
+
+```
+cmake -S . -B build
+cmake --build build --config Release
+```
+Programy znajdują się w folderze 'build'
+
+#### Windows:
+Wprowadź następujące komendy do konsoli w folderze projektu. <br>
+<b>Zastąp ścieżkę w pierwszek komendzie lokacją twojej instalacji QT</b>
+```
+cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/qt/6.8.3/msvc2022_64
+cmake --build build --config Release
+cmake --install build --config Release
+```
+Programy znajdują się w folderze dist/bin
+
 ### Wykonane części:
 - UI.
 - Komunikacja pomiędzy klientem i serwerem.
@@ -25,4 +47,4 @@ Wkładanie monet do maszyny symulowane jest poprzez wpisywanie nominału w centa
 
 ### Disclaimer:
 Jako że program ten ma służyć jako dowód, że potrafię programować i znam oraz rozumiem zagadnienia zawarte w kodzie, napisałem go oczywiście ja osobiście, to jest, nie został sporządzony przez AI. 
-To powiedziawszy, używałem AI do zalezienia literówek i błędów w kodzie oraz jako pomoc w znalezieniu konkretnych informacji w dokumentacji QT.
+To powiedziawszy, używałem AI do zalezienia literówek i błędów w kodzie oraz jako pomoc w znalezieniu konkretnych informacji w dokumentacji QT. Poza tym CMakeLists.txt zostało napisane mocno polegając na AI. Chciałbym umieć pisać je sam, lecz jest to coś, co robi się tak rzadko, że ciężko jest, by wiedza się ostała.

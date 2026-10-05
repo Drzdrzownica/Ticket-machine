@@ -431,6 +431,7 @@ public:
     }
     void reinitialize(const std::vector<TicketData>& listOfTickets,Language language){
         clearTicketButtons();
+        reEnableInput();
         if(listOfTickets.empty()){
             errorMessage->setVisible(true);
         }else{
@@ -449,7 +450,6 @@ public:
                 });
             }
         }
-        reEnableInput();
     }
 signals:
     void backPressed();
