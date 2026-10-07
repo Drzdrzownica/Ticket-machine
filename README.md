@@ -13,7 +13,7 @@ Nie działa on bez połączenia z serwerem, który to zatwierdza lub odmawia tra
 Wkładanie monet do maszyny symulowane jest poprzez wpisywanie nominału w centach. Wybrałem dolary jako walutę, ponieważ projekt wykonany jest w języku angielskim.
 
 ## Kompilacja
-Upewnij się że masz zainstlowane QT oraz CMake.
+Upewnij się że masz zainstlowane Qt oraz CMake.
 
 ### Linux:
 Wprowadź następujące komendy do konsoli w folderze projektu:
@@ -26,7 +26,7 @@ Programy znajdują się w folderze 'build'
 
 ### Windows:
 Wprowadź następujące komendy do konsoli w folderze projektu. <br>
-<b>Zastąp ścieżkę w pierwszek komendzie lokacją twojej instalacji QT</b>
+<b>Zastąp ścieżkę w pierwszek komendzie lokacją twojej instalacji Qt</b>
 ```
 cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/qt/6.8.3/msvc2022_64
 cmake --build build --config Release
@@ -43,6 +43,7 @@ Programy znajdują się w folderze dist/bin
 - Client prawidłowo wylicza i wydaje resztę.
 
 ## Do zrobiena:
+- Separacja kodu klienta na osobne pliki
 - Timeout pre-rezerwacji, gdy użytkownik spędza za dużo czasu na transakcje.
 - Podłączenie serwera do bazy danych by sprzedaże mogły być zarejestrowane.
 - Podłączenie klienta (klientów) do baz danych i rejestracja ilości nominałów posiadanych przez każdą maszynę.
@@ -51,4 +52,4 @@ Programy znajdują się w folderze dist/bin
 
 ## Disclaimer:
 Jako że program ten ma służyć jako dowód, że potrafię programować i znam oraz rozumiem zagadnienia zawarte w kodzie, napisałem go oczywiście ja osobiście, to jest, nie został sporządzony przez AI. 
-To powiedziawszy, używałem AI do zalezienia literówek i błędów w kodzie oraz jako pomoc w znalezieniu konkretnych informacji w dokumentacji QT. Poza tym CMakeLists.txt zostało napisane mocno polegając na AI. Chciałbym umieć pisać je sam, lecz jest to coś, co robi się tak rzadko, że ciężko jest, by wiedza się ostała.
+To powiedziawszy, używałem AI do zalezienia literówek i błędów w kodzie oraz jako pomoc w znalezieniu konkretnych informacji w dokumentacji. Poza tym CMakeLists.txt zostało napisane mocno polegając na AI. Chciałbym umieć pisać je sam, lecz jest to coś, co robi się tak rzadko, że ciężko jest, by wiedza się ostała.

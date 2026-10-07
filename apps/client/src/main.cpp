@@ -180,7 +180,8 @@ public:
         layout.addWidget(details);
     }
     void reinitialize(ClientShutdownReason reason,Language language){
-        details->setText("Shutdown reason code "+QString::number(static_cast<std::underlying_type_t<ClientShutdownReason>>(reason)));
+        details->setText("Shutdown reason code "+QString::number(static_cast<std::underlying_type_t<ClientShutdownReason>>(reason))+".");
+        if(reason==ClientShutdownReason::Socket_error)details->setText(details->text()+"\nServer is likely offline. Make sure it's online and reset the application.");
     }
 };
 
@@ -212,7 +213,7 @@ signals:
 class LoginPage: public QWidget{
     Q_OBJECT
     QVBoxLayout layout;
-    QLabel* instruction=new QLabel("Enter The DB id \n(the local databases are not yet hooked up. For now enter \"temp\")",this);
+    QLabel* instruction=new QLabel(this);
     QLineEdit* inputBox=new QLineEdit(this);
     QLabel* tryAgainMessage=new QLabel("No DB with given ID. Try again",this);
     QPushButton* loginButton=new QPushButton("login",this);
@@ -226,7 +227,7 @@ class LoginPage: public QWidget{
         loginButton->setDisabled(false);
     }
 
-    void loginClicked(){
+    void onLoginClicked(){
         disableInput();
         QString dbId=inputBox->text();
         inputBox->setText("");
@@ -239,16 +240,20 @@ public:
         layout.addWidget(inputBox);
         layout.addWidget(tryAgainMessage);
         layout.addWidget(loginButton);
+        instruction->setText("Awaiting server connection. Please wait.");
         disableInput();
         tryAgainMessage->setVisible(false);
-        connect(loginButton,&QPushButton::clicked,this,[this](){disableInput(); emit loginClicked();});
+        connect(loginButton,&QPushButton::clicked,this,&LoginPage::onLoginClicked);
+        connect(inputBox,&QLineEdit::returnPressed,this,&LoginPage::onLoginClicked);
     }
 public slots:
     void dbIdRejected(){
         tryAgainMessage->setVisible(true);
         reEnableInput();
+        inputBox->setFocus();
     }
     void allowLogin(){
+        instruction->setText("Enter The DB id \n(the local databases are not yet hooked up. For now enter \"temp\")");
         reEnableInput();
     }
 signals:
@@ -465,17 +470,25 @@ class InputPersonalDataPage:public QWidget{
     QLabel* errorMessage=new QLabel("The name you provided has been rejected. Try again.",this);
     QPushButton* confirmButton = new QPushButton("confirm",this);
     QPushButton* cancelButton= new QPushButton("Cancel",this);
-
+    QMetaObject::Connection inputSubmitConnection;
     void disableInput(){
         confirmButton->setDisabled(true);
         inputField->setDisabled(true);
         cancelButton->setDisabled(true);
+        disconnect(inputSubmitConnection);
     }
 
     void reEnableInput(){
         confirmButton->setDisabled(false);
         inputField->setDisabled(false);
         cancelButton->setDisabled(false);
+        if(!inputSubmitConnection)inputSubmitConnection = connect(inputField,&QLineEdit::returnPressed,this,&InputPersonalDataPage::onSubmitt);
+    }
+
+    void onSubmitt(){
+        disableInput();
+        emit personalDataSubmitted(inputField->text());
+        inputField->setText("");
     }
 
 public:
@@ -492,17 +505,14 @@ public:
             emit cancelPressed();
         }
         );
-        connect(confirmButton,&QPushButton::clicked,this,[this](){
-            disableInput();
-            emit personalDataSubmitted(inputField->text());
-            inputField->setText("");
-        }
-        );
+        inputSubmitConnection = connect(inputField,&QLineEdit::returnPressed,this,&InputPersonalDataPage::onSubmitt);
+        connect(confirmButton,&QPushButton::clicked,this,&InputPersonalDataPage::onSubmitt);
     }
     void reinitialize(const TicketData& data,Language language){
         reEnableInput();
         errorMessage->setVisible(false);
         title->setText("Input name associated with the ticket for "+ data.name);
+        inputField->setFocus();
     }
 signals:
     void cancelPressed();
@@ -522,6 +532,7 @@ class PaymentPage: public QWidget{
     QLabel* instruction=new QLabel("You are not supposed to see this message",this);
     QLineEdit* coinSlot=new QLineEdit(this);
     QPushButton* insertButton=new QPushButton("insert",this);
+    QMetaObject::Connection insertSubmitConnection;
     QLabel* unknownCoinMessage=new QLabel("The coin was rejected",this);
     QLabel* insertedMessage=new QLabel("You are not supposed to see this message",this);
     QPushButton* confirmButton= new QPushButton("confirm",this);
@@ -534,6 +545,7 @@ class PaymentPage: public QWidget{
         coinSlot->setDisabled(true);
         cancelButton->setDisabled(true);
         insertButton->setDisabled(true);
+        disconnect(insertSubmitConnection);
     }
 
     void reEnableInput(){
@@ -541,9 +553,11 @@ class PaymentPage: public QWidget{
         coinSlot->setDisabled(false);
         cancelButton->setDisabled(false);
         insertButton->setDisabled(false);
+        if(!insertSubmitConnection)insertSubmitConnection= connect(coinSlot,&QLineEdit::returnPressed,this,&PaymentPage::processCoin);
     }
 
     void processCoin(){
+        disableInput();
         emit denominationInserted(coinSlot->text());
         coinSlot->setText("");
 }   
@@ -561,13 +575,15 @@ public:
         confirmButton->setDisabled(true);
         layout.addWidget(cancelButton);
         connect(cancelButton,&QPushButton::clicked,this,[this](){disableInput(); emit cancelPressed();});
-        connect(insertButton,&QPushButton::clicked,this,[this](){disableInput(); emit processCoin();});
+        connect(insertButton,&QPushButton::clicked,this,&PaymentPage::processCoin);
+        insertSubmitConnection= connect(coinSlot,&QLineEdit::returnPressed,this,&PaymentPage::processCoin);
         connect(confirmButton,&QPushButton::clicked,this,[this](){disableInput(); emit confirmPressed();});
     }
     void reinitialize(const TicketData& data,Language language){
         instruction->setText("insert "+centsToPriceString(data.price)+" in coins or bills");
         reEnableInput();
         insertedMessage->setText("so far inserted $0.00");
+        coinSlot->setFocus();
     }
 signals:
     void cancelPressed();
@@ -581,10 +597,12 @@ public slots:
         this->isEnough=isEnough;
         reEnableInput();
         unknownCoinMessage->setVisible(false);
+        coinSlot->setFocus();
     }
     void unknownCoin(){
         reEnableInput();
         unknownCoinMessage->setVisible(true);
+        coinSlot->setFocus();
     }
 
 };

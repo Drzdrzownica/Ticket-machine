@@ -39,6 +39,7 @@ You will find the executables in the dist/bin directory.
 - The client correctly calculates and gives out change.
 
 ## Planned features
+- Putting client code into separate files
 - Pre-reservation timeout, when a user spends too much time on the transaction.
 - Connecting the server to a database so that purchases can be registered.
 - Connecting client(s) to databases so they can register how much money is inside.
