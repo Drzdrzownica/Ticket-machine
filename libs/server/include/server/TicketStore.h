@@ -2,7 +2,6 @@
 #define TICKET_STORE_H
 #pragma once
 #include "protocol/serialization.h"
-#include "protocol/constants.h"
 
 using SessionId = quint64;
 
