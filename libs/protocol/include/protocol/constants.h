@@ -1,6 +1,6 @@
 #ifndef CONSTANTS_H
 #define CONSTANTS_H
-#pragma once
+
 #include <QtGlobal>
 #include <QString>
 #include <QByteArray>

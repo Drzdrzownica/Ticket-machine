@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QLabel>
 #include "client/ClientTypes.h"
+#include "client/CoinInventory.h"
 
 class DebugEditCoinsPage:public QWidget{
     Q_OBJECT

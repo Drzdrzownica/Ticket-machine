@@ -61,6 +61,8 @@ add_executable(clientProgram
 
     ./libs/client/src/UI/PrintingPage.cpp
     ./libs/client/include/client/UI/PrintingPage.h
+
+    ./libs/client/src/CoinInventory.cpp
 )
 
 target_include_directories(serverProgram PRIVATE ${CMAKE_SOURCE_DIR}/libs/server/include)

@@ -6,9 +6,9 @@
 #include <QTcpSocket>
 
 #include "protocol/serialization.h"
-#include "protocol/constants.h"
 #include "logging.h"
 #include "client/ClientTypes.h"
+#include "client/CoinInventory.h"
 #include "client/UI/ErrorStatePage.h"
 #include "client/UI/ErrorTryAgainPage.h"
 #include "client/UI/LoginPage.h"
@@ -37,11 +37,13 @@ class PaymentProcessor:public QObject{
     Cents ticketCost=0;
     PaymentProcessorState currentState=PaymentProcessorState::idle;
 private:
-
-    void resetTransaction(){
+    void clearTransactionData(){
         changeToGiveOut={};
         transactionInventory={};
         ticketCost = 0;
+    }
+    void resetTransaction(){
+        clearTransactionData();
         currentState=PaymentProcessorState::idle;
     }
 
@@ -77,60 +79,80 @@ public slots:
 
     void panicEjectMoney(){
         outputCoins(transactionInventory);
-        resetTransaction();
+        clearTransactionData();
         currentState=PaymentProcessorState::disabled;
     }
 
     void DEBUGCoinAdded(Cents cents){
-        localInventory.addCoin(cents);
-        emit localInventoryChanged(localInventory);
+        try{
+            localInventory.addCoin(cents);
+            emit localInventoryChanged(localInventory);
+        }catch(...){
+            emit requestedShutdown(ClientShutdownReason::CoinInventory_Logic_error);
+        }
     }
 
     void DEBUGCoinRemoved(Cents cents){
-        localInventory.subtractCoin(cents);
-        emit localInventoryChanged(localInventory);
+        try{
+            localInventory.subtractCoin(cents);
+            emit localInventoryChanged(localInventory);
+        }catch(...){
+            emit requestedShutdown(ClientShutdownReason::CoinInventory_Logic_error);
+        }    
     }
 
     void insertCoin(Cents coinVal){
-        if(currentState==PaymentProcessorState::acceptingCoins){
-            transactionInventory.addCoin(coinVal);
-            emit amountInsertedChanged(transactionInventory.getTotalAmount(),transactionInventory.getTotalAmount()>=ticketCost);
-        }else emit requestedShutdown(ClientShutdownReason::Transaction_state_violation);
+        try{
+            if(currentState==PaymentProcessorState::acceptingCoins){
+                transactionInventory.addCoin(coinVal);
+                emit amountInsertedChanged(transactionInventory.getTotalAmount(),transactionInventory.getTotalAmount()>=ticketCost);
+            }else emit requestedShutdown(ClientShutdownReason::Transaction_state_violation);
+        }catch(...){
+            emit requestedShutdown(ClientShutdownReason::CoinInventory_Logic_error);
+        }
     }
 
     void prepareToAcceptPurchase(){
-        if(currentState!=PaymentProcessorState::acceptingCoins){
-            emit errorWhenPreparingChange();
-        }else{
-            Cents sumInserted=transactionInventory.getTotalAmount();
-            if(sumInserted<ticketCost){
-                logging::log("Warning: not enough money to afford the ticket");
-                emit canNotGiveOutChange();
+        try{
+            if(currentState!=PaymentProcessorState::acceptingCoins){
+                emit errorWhenPreparingChange();
             }else{
-                Cents changeValue=sumInserted-ticketCost;
-                CoinInventory fullInventory=localInventory+transactionInventory;
-                auto change=fullInventory.coinChange(changeValue);
-                if(!change){
+                Cents sumInserted=transactionInventory.getTotalAmount();
+                if(sumInserted<ticketCost){
+                    logging::log("Warning: not enough money to afford the ticket");
                     emit canNotGiveOutChange();
                 }else{
-                    changeToGiveOut=change.value();
-                    currentState=PaymentProcessorState::awaitingFinalConfirmation;
-                    emit changeReady();
+                    Cents changeValue=sumInserted-ticketCost;
+                    CoinInventory fullInventory=localInventory+transactionInventory;
+                    auto change=fullInventory.coinChange(changeValue);
+                    if(!change){
+                        emit canNotGiveOutChange();
+                    }else{
+                        changeToGiveOut=change.value();
+                        currentState=PaymentProcessorState::awaitingFinalConfirmation;
+                        emit changeReady();
+                    }
                 }
             }
+        }catch(...){
+            emit requestedShutdown(ClientShutdownReason::CoinInventory_Logic_error);
         }
     }
 
     void finalizePurchase(){
-        if(currentState!=PaymentProcessorState::awaitingFinalConfirmation){
-            emit requestedShutdown(ClientShutdownReason::Transaction_state_violation);
-        }else{
-            localInventory.moveInventoryFrom(transactionInventory); 
-            outputCoins(changeToGiveOut);
-            localInventory.subtractInventory(changeToGiveOut);
-            resetTransaction();
-            emit localInventoryChanged(localInventory);
-            emit purchaseCompleted();
+        try{
+            if(currentState!=PaymentProcessorState::awaitingFinalConfirmation){
+                emit requestedShutdown(ClientShutdownReason::Transaction_state_violation);
+            }else{
+                localInventory.moveInventoryFrom(transactionInventory); 
+                outputCoins(changeToGiveOut);
+                localInventory.subtractInventory(changeToGiveOut);
+                resetTransaction();
+                emit localInventoryChanged(localInventory);
+                emit purchaseCompleted();
+            }
+        }catch(...){
+            emit requestedShutdown(ClientShutdownReason::CoinInventory_Logic_error);
         }
     }
 
